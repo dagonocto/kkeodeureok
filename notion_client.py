@@ -163,7 +163,10 @@ def append_axis_block(page_id: str, axis: dict, notion_token: str) -> None:
         "Notion-Version": NOTION_VERSION,
         "Content-Type": "application/json",
     }
-    body = {"children": [_heading2("🙋 추가 질문"), _axis_callout(axis)]}
+    children = [_heading2("🙋 추가 질문"), _axis_callout(axis)]
+    for ref in axis.get("references", []):
+        children.append(_reference_bullet(ref["source"], ref["title"], ref["url"]))
+    body = {"children": children}
     response = requests.patch(_block_children_url(page_id), headers=headers, json=body, timeout=30)
     response.raise_for_status()
 

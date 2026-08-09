@@ -142,17 +142,33 @@ FOLLOWUP_SYSTEM_PROMPT = f"""사용자가 이미 한 번 분석한 기사 원문
 - 2~4문장으로 간결하게 답한다.
 - family는 질문의 성격에 가장 잘 맞는 것을 아래 7개 중에서 하나 고른다: {", ".join(AXIS_FAMILIES)}
 - 정치적으로 논쟁적인 일반화 주장을 다룰 때는 사실관계만 제시하고 sensitive: true로 표시한다.
+- web_search로 확인한 출처를 references에 최소 1개 이상 기록한다(source: 매체명, title: 제목,
+  url: 실제 접근 가능한 링크, 확인 안 되면 null). 원문 내용만으로 답할 수 있어 검색이
+  필요 없었다면 references는 빈 배열로 둔다.
 """
 
 FOLLOWUP_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["family", "title", "explanation", "confidence", "sensitive"],
+    "required": ["family", "title", "explanation", "confidence", "sensitive", "references"],
     "properties": {
         "family": {"type": "string", "enum": AXIS_FAMILIES},
         "title": {"type": "string", "description": "이 축을 요약하는 짧은 제목"},
         "explanation": {"type": "string"},
         "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
         "sensitive": {"type": "boolean"},
+        "references": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["source", "title", "url"],
+                "properties": {
+                    "source": {"type": "string"},
+                    "title": {"type": "string"},
+                    "url": {"type": ["string", "null"], "description": "출처 원문 링크 (확인 안 되면 null)"},
+                },
+            },
+        },
     },
 }

@@ -221,6 +221,11 @@ def render_result(data: dict, key_prefix: str = "") -> None:
                     st.write(axis["explanation"])
                     if axis["confidence"] == "low":
                         st.caption("확실하지 않음 — 확인 필요")
+                    # 추가 질문으로 붙은 축만 개별 출처(references)를 가진다 — 기존 축은
+                    # 기사 전체 "더 파보고 싶으면" 목록으로 출처를 갈음하기 때문에 없을 수 있다.
+                    for ref in axis.get("references", []):
+                        title = f"[{ref['title']}]({ref['url']})" if ref["url"] else ref["title"]
+                        st.caption(f"출처: {ref['source']} · {title}")
                     # 축 하나하나에 피드백을 남길 수 있게 한다 — 기사 전체가 아니라
                     # "이 축이 좋았는지/별로였는지"를 짚어줘야 다음 지침에 더 정확히 반영된다.
                     up_col, down_col = st.columns(2)
