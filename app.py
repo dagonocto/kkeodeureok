@@ -101,6 +101,13 @@ with st.expander("📚 최근 기록"):
             st.markdown(f"- [{page['title']}]({page['url']}) · {page['category']}")
 
 with st.container(border=True):
+    # Streamlit은 위젯이 이미 그려진 뒤에는 그 위젯의 session_state를 직접 바꿀 수 없다.
+    # 그래서 "지금 비워라" 표시만 미리 남겨두고, 위젯을 그리기 *전에* 그 표시를 보고
+    # 비운 다음 표시를 내린다 — 다음 실행(rerun)에서만 적용되는 방식이다.
+    if st.session_state.get("_clear_link_url"):
+        st.session_state.link_url_input = ""
+        st.session_state._clear_link_url = False
+
     # 링크 입력이 압도적으로 자주 쓰이는 방식이라, 이걸 기본(가장 먼저 보이는 입력창)으로 두고
     # 파일 업로드는 "링크가 안 될 때"를 위한 대안으로 접어(expander) 넣어둔다.
     link_url = st.text_input("기사 URL", key="link_url_input")
@@ -357,9 +364,9 @@ if st.button("분석 시작"):
             save_to_notion(result)
             if input_mode == "링크 입력":
                 # 다음 기사를 바로 이어서 검색할 수 있도록 입력창을 비운다.
-                # 위에서 이미 text_input을 그린 뒤라 이번 화면엔 반영이 안 되니,
-                # 값을 지운 상태로 다시 그리기 위해 한 번 더 처음부터 실행한다.
-                st.session_state.link_url_input = ""
+                # (위젯이 이미 그려진 뒤라 여기서 직접 값을 바꿀 수 없어서, 표시만
+                # 남기고 다음 실행 시작 부분에서 실제로 비운다)
+                st.session_state._clear_link_url = True
                 st.rerun()
 
 if st.session_state.result:
@@ -378,6 +385,9 @@ if st.session_state.result:
 
         st.divider()
         st.markdown("**🙋 더 궁금한 점 있어요?**")
+        if st.session_state.get("_clear_followup"):
+            st.session_state.followup_input = ""
+            st.session_state._clear_followup = False
         followup_q = st.text_input(
             "추가 질문", key="followup_input", label_visibility="collapsed",
             placeholder="예: OO는 왜 그렇게 말했을까?",
@@ -401,7 +411,7 @@ if st.session_state.result:
                                 append_axis_block(st.session_state.page_id, new_axis, st.secrets["NOTION_TOKEN"])
                             except Exception as e:  # noqa: BLE001
                                 st.warning(f"화면엔 추가됐지만 Notion에는 못 붙였어요: {e}")
-                        st.session_state.followup_input = ""  # 다음 질문을 편하게 이어 물어볼 수 있도록 비운다
+                        st.session_state._clear_followup = True  # 다음 질문을 편하게 이어 물어볼 수 있도록 비운다
                         st.rerun()  # 방금 추가된 축이 위쪽 결과 화면에 바로 보이도록 다시 그린다
 
     st.write("")
