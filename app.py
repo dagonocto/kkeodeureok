@@ -103,7 +103,7 @@ with st.expander("📚 최근 기록"):
 with st.container(border=True):
     # 링크 입력이 압도적으로 자주 쓰이는 방식이라, 이걸 기본(가장 먼저 보이는 입력창)으로 두고
     # 파일 업로드는 "링크가 안 될 때"를 위한 대안으로 접어(expander) 넣어둔다.
-    link_url = st.text_input("기사 URL")
+    link_url = st.text_input("기사 URL", key="link_url_input")
     st.caption("일부 사이트(로그인 필요, 크롤링 방지 등)는 본문을 못 가져올 수 있어요 — 그럴 땐 아래에서 파일로 올려주세요.")
     with st.expander("파일로 업로드하기 (링크가 안 될 때)"):
         uploaded_file = st.file_uploader(
@@ -355,6 +355,12 @@ if st.button("분석 시작"):
             st.session_state.document_block = document_block
             st.session_state.url_for_notion = url_for_notion
             save_to_notion(result)
+            if input_mode == "링크 입력":
+                # 다음 기사를 바로 이어서 검색할 수 있도록 입력창을 비운다.
+                # 위에서 이미 text_input을 그린 뒤라 이번 화면엔 반영이 안 되니,
+                # 값을 지운 상태로 다시 그리기 위해 한 번 더 처음부터 실행한다.
+                st.session_state.link_url_input = ""
+                st.rerun()
 
 if st.session_state.result:
     st.write("")
@@ -395,6 +401,7 @@ if st.session_state.result:
                                 append_axis_block(st.session_state.page_id, new_axis, st.secrets["NOTION_TOKEN"])
                             except Exception as e:  # noqa: BLE001
                                 st.warning(f"화면엔 추가됐지만 Notion에는 못 붙였어요: {e}")
+                        st.session_state.followup_input = ""  # 다음 질문을 편하게 이어 물어볼 수 있도록 비운다
                         st.rerun()  # 방금 추가된 축이 위쪽 결과 화면에 바로 보이도록 다시 그린다
 
     st.write("")
