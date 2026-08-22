@@ -166,7 +166,7 @@ def analyze_article(document_block: dict, url: str) -> dict:
 
     response = client.responses.create(
         model=MODEL,
-        max_output_tokens=8000,
+        max_output_tokens=14000,
         input=[
             {"role": "system", "content": build_system_prompt()},
             {"role": "user", "content": [document_block, {"type": "input_text", "text": instruction}]},
@@ -298,7 +298,7 @@ def answer_followup(document_block: dict, url: str, question: str) -> tuple[dict
 
     response = client.responses.create(
         model=MODEL,
-        max_output_tokens=2000,
+        max_output_tokens=3500,
         input=[
             {"role": "system", "content": FOLLOWUP_SYSTEM_PROMPT},
             {"role": "user", "content": [document_block, {"type": "input_text", "text": instruction}]},
