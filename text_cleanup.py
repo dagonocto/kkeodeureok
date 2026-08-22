@@ -8,7 +8,7 @@ API 레벨에서 새는 현상으로 보인다. app.py와 regression_test.py 양
 
 import re
 
-_TRAILING_ARTIFACT_RE = re.compile(r"[\}\]\,]{2,}\s*$")
+_TRAILING_ARTIFACT_RE = re.compile(r"(?:[\}\]\,]{2,}|,)\s*$")
 
 
 def strip_trailing_artifacts(value):
