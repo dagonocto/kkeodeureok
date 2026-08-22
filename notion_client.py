@@ -172,7 +172,11 @@ def append_axis_block(page_id: str, axis: dict, notion_token: str) -> None:
 
 
 def list_recent_pages(notion_token: str, data_source_id: str, limit: int = 10) -> list[dict]:
-    """최근 저장한 기사 목록을 가져온다. 각 항목은 title/category/url을 담은 dict."""
+    """최근 저장한 기사 목록을 가져온다. 각 항목은 title/category/url/source_url을 담은 dict.
+
+    source_url은 "이미 분석한 기사인지" 중복 체크에 쓰인다 — app.py에서 새로 입력된
+    기사 URL이 이 목록의 source_url과 겹치면 재분석 전에 사용자에게 물어본다.
+    """
     headers = {
         "Authorization": f"Bearer {notion_token}",
         "Notion-Version": NOTION_VERSION,
@@ -191,5 +195,6 @@ def list_recent_pages(notion_token: str, data_source_id: str, limit: int = 10) -
         title_runs = props.get("제목", {}).get("title", [])
         title = title_runs[0]["plain_text"] if title_runs else "(제목 없음)"
         category = (props.get("분야", {}).get("select") or {}).get("name", "")
-        pages.append({"title": title, "category": category, "url": page["url"]})
+        source_url = (props.get("출처 URL") or {}).get("url")
+        pages.append({"title": title, "category": category, "url": page["url"], "source_url": source_url})
     return pages

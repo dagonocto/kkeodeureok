@@ -13,6 +13,7 @@ import base64
 import concurrent.futures
 import json
 import time
+from urllib.parse import urlparse
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -88,6 +89,12 @@ if "result" not in st.session_state:
     st.session_state.last_cost = None
     st.session_state.document_block = None
     st.session_state.url_for_notion = None
+if "dup_warning_url" not in st.session_state:
+    # 같은 기사를 실수로 두 번 분석하면 돈도 두 번 나가고 Notion에 중복 페이지가 쌓인다.
+    # 그래서 "분석 시작"을 누르면 먼저 이미 저장된 기사인지 확인하고, 맞으면 여기에
+    # 그 URL을 잠깐 담아뒀다가 사용자가 "그래도 다시 분석하기"를 눌러야 진행한다.
+    st.session_state.dup_warning_url = None
+    st.session_state.dup_page_url = None
 
 with st.expander("📚 최근 기록"):
     try:
@@ -182,7 +189,16 @@ def analyze_article(document_block: dict, url: str) -> dict:
     # "web_search_call" 항목이 몇 개 있는지로 직접 세야 한다.
     search_calls = sum(1 for item in response.output if item.type == "web_search_call")
     cost = log_usage(response.usage.input_tokens, response.usage.output_tokens, search_calls)
-    return json.loads(response.output_text), cost
+    data = json.loads(response.output_text)
+
+    # 모델이 언론사명을 못 찾으면 "확인 불가"를 돌려주는데, 그러면 Notion 페이지에
+    # 출처가 아예 안 보인다. URL의 도메인이라도 있으면 그걸로 대신 채운다.
+    if data.get("source_name") in (None, "", "확인 불가") and url:
+        domain = urlparse(url).netloc.removeprefix("www.")
+        if domain:
+            data["source_name"] = domain
+
+    return data, cost
 
 
 # 축 패밀리마다 다른 아이콘 — notion_client.py의 FAMILY_ICONS와 짝을 맞춘다.
@@ -306,6 +322,21 @@ def answer_followup(document_block: dict, url: str, question: str) -> tuple[dict
     return json.loads(response.output_text), cost
 
 
+def find_duplicate_page_url(target_url: str) -> str | None:
+    """이미 저장된 기사 중 원문 URL이 같은 게 있으면 그 Notion 페이지 URL을 돌려준다."""
+    if not target_url:
+        return None
+    target_url = target_url.strip().rstrip("/")
+    try:
+        recent = list_recent_pages(st.secrets["NOTION_TOKEN"], st.secrets["NOTION_DATA_SOURCE_ID"], limit=30)
+    except Exception:  # noqa: BLE001 - 중복 체크 실패는 조용히 넘어가고 정상 분석을 막지 않는다
+        return None
+    for page in recent:
+        if page.get("source_url") and page["source_url"].strip().rstrip("/") == target_url:
+            return page["url"]
+    return None
+
+
 def analyze_with_progress(document_block: dict, url: str):
     """analyze_article을 실행하는 동안 진행률 표시줄을 보여준다.
 
@@ -331,6 +362,40 @@ def analyze_with_progress(document_block: dict, url: str):
     return result
 
 
+def perform_analysis():
+    """실제 분석 1건을 실행한다. 정상 경로와 "그래도 다시 분석하기" 경로가 함께 쓴다."""
+    try:
+        if input_mode == "링크 입력":
+            article_text = fetch_article_text(link_url)
+            document_block = {"type": "input_text", "text": article_text}
+            url_for_notion = link_url
+        else:
+            document_block = build_document_block(uploaded_file)
+            url_for_notion = source_url
+
+        result, cost = analyze_with_progress(document_block, url_for_notion)
+    except Exception as e:  # noqa: BLE001 - 화면에 에러를 그대로 보여주기 위해 넓게 잡음
+        st.error(f"분석 중 문제가 발생했어요: {e}")
+    else:
+        # 기억 상자에 저장 — 이후 재실행(피드백 저장 버튼 등)돼도 안 사라짐.
+        # document_block/url_for_notion도 같이 저장해두는 이유: "추가 질문" 기능에서
+        # 원문을 다시 업로드/입력받지 않고 그대로 재사용하기 위해서다.
+        st.session_state.result = result
+        st.session_state.last_cost = cost
+        st.session_state.page_url = None
+        st.session_state.page_id = None
+        st.session_state.document_block = document_block
+        st.session_state.url_for_notion = url_for_notion
+        st.session_state.dup_warning_url = None
+        save_to_notion(result)
+        if input_mode == "링크 입력":
+            # 다음 기사를 바로 이어서 검색할 수 있도록 입력창을 비운다.
+            # (위젯이 이미 그려진 뒤라 여기서 직접 값을 바꿀 수 없어서, 표시만
+            # 남기고 다음 실행 시작 부분에서 실제로 비운다)
+            st.session_state._clear_link_url = True
+        st.rerun()
+
+
 if st.button("분석 시작"):
     # 버튼을 처음부터 막아두지(disabled) 않는 이유: text_input은 엔터를 치거나 다른 곳을
     # 눌러야 값이 "확정"되는데, 그걸 기준으로 버튼을 비활성화해두면 확정되기 전에는
@@ -339,35 +404,21 @@ if st.button("분석 시작"):
     if not ready:
         st.warning("파일을 올리거나 링크를 입력해주세요.")
     else:
-        try:
-            if input_mode == "링크 입력":
-                article_text = fetch_article_text(link_url)
-                document_block = {"type": "input_text", "text": article_text}
-                url_for_notion = link_url
-            else:
-                document_block = build_document_block(uploaded_file)
-                url_for_notion = source_url
-
-            result, cost = analyze_with_progress(document_block, url_for_notion)
-        except Exception as e:  # noqa: BLE001 - 화면에 에러를 그대로 보여주기 위해 넓게 잡음
-            st.error(f"분석 중 문제가 발생했어요: {e}")
+        target_url = link_url.strip() if input_mode == "링크 입력" else source_url.strip()
+        dup_page_url = find_duplicate_page_url(target_url)
+        if dup_page_url:
+            st.session_state.dup_warning_url = target_url
+            st.session_state.dup_page_url = dup_page_url
         else:
-            # 기억 상자에 저장 — 이후 재실행(피드백 저장 버튼 등)돼도 안 사라짐.
-            # document_block/url_for_notion도 같이 저장해두는 이유: "추가 질문" 기능에서
-            # 원문을 다시 업로드/입력받지 않고 그대로 재사용하기 위해서다.
-            st.session_state.result = result
-            st.session_state.last_cost = cost
-            st.session_state.page_url = None
-            st.session_state.page_id = None
-            st.session_state.document_block = document_block
-            st.session_state.url_for_notion = url_for_notion
-            save_to_notion(result)
-            if input_mode == "링크 입력":
-                # 다음 기사를 바로 이어서 검색할 수 있도록 입력창을 비운다.
-                # (위젯이 이미 그려진 뒤라 여기서 직접 값을 바꿀 수 없어서, 표시만
-                # 남기고 다음 실행 시작 부분에서 실제로 비운다)
-                st.session_state._clear_link_url = True
-                st.rerun()
+            perform_analysis()
+
+if st.session_state.dup_warning_url:
+    st.warning(
+        f"이미 분석한 적 있는 기사 같아요 — [기존 결과 보기]({st.session_state.dup_page_url}). "
+        "그래도 새로 분석하려면 아래 버튼을 눌러주세요."
+    )
+    if st.button("그래도 다시 분석하기"):
+        perform_analysis()
 
 if st.session_state.result:
     st.write("")
