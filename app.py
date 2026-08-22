@@ -243,6 +243,9 @@ def render_result(data: dict, key_prefix: str = "") -> None:
                     label = f"⚠️ {axis['title']}" if axis["sensitive"] else axis["title"]
                     st.markdown(f"**{icon} {label}**")
                     st.write(axis["explanation"])
+                    talk_line = axis.get("talk_line")
+                    if talk_line:
+                        st.markdown(f"> 💬 {talk_line}")
                     if axis["confidence"] == "low":
                         st.caption("확실하지 않음 — 확인 필요")
                     # 추가 질문으로 붙은 축만 개별 출처(references)를 가진다 — 기존 축은

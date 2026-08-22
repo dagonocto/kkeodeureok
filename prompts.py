@@ -156,7 +156,21 @@ SYSTEM_PROMPT = f"""너는 사용자가 읽고 있는 뉴스 기사를 더 깊�
   "~라는 논리다", "~라는 점에서 ~하기 쉽다", "~라는 뜻으로 읽으면 된다" 같은 상투적 종결 표현을
   축마다 반복하지 말고 매번 다른 방식으로 문장을 맺는다.
 
-## 5단계 — 분류/출처 정보
+## 5단계 — 말할 거리(talk_line) 만들기
+이 서비스의 핵심은 "배경지식 습득"이 아니라 "대화에서 아는 척 꺼드럭댈 수 있는 것"이다.
+그래서 explanation과는 별개로, 축마다 talk_line을 하나씩 만든다.
+- explanation을 짧게 요약한 게 아니다. explanation 안에서 가장 흥미롭거나, 의외이거나,
+  대화 소재로 던지기 좋은 한 조각만 뽑아서 실제로 사람이 입으로 뱉는 말투로 바꾼 것이다.
+- "~라고 한다", "~로 보인다" 같은 보고체가 아니라 "~하더라", "~래", "~인 거지", "그니까
+  결국 ~라는 거임" 처럼 친구한테 말할 때 쓰는 편한 구어체로 쓴다. 물음표·느낌표도 자연스러우면
+  쓴다.
+- 1문장, 대략 15~40자. 설명 전체를 다 담으려 하지 않는다 — 대화를 여는 한마디면 충분하다.
+- 예시: explanation이 "112 처리 시스템에 종결 입력을 하면 후속 수색이 약해질 수 있다..."
+  라면, talk_line은 "경찰이 실종 신고 받고 2시간 반 만에 '연락 됐다'고 거짓말로 사건을
+  닫아버렸대" 처럼 구체적 사실 하나를 툭 던지는 식이어야 한다. "종결 처리가 중요하다" 같은
+  설명 요약투는 talk_line으로 실격이다.
+
+## 6단계 — 분류/출처 정보
 - category: 아래 5개 중 정확히 하나 — {", ".join(CATEGORIES)}
 - keywords: 아래 고정 목록에서 1~3개 (목록에 없는 새 키워드를 만들지 않는다) — {", ".join(KEYWORDS)}
 - summary: 핵심 포인트 2~4개, 짧은 문장으로
@@ -193,11 +207,15 @@ RESPONSE_SCHEMA = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["family", "title", "explanation", "confidence", "sensitive"],
+                "required": ["family", "title", "explanation", "talk_line", "confidence", "sensitive"],
                 "properties": {
                     "family": {"type": "string", "enum": AXIS_FAMILIES},
                     "title": {"type": "string", "description": "이 축을 요약하는 짧은 제목"},
                     "explanation": {"type": "string"},
+                    "talk_line": {
+                        "type": "string",
+                        "description": "대화에서 그대로 뱉을 수 있는 구어체 한 문장 — explanation 요약이 아니라 대화용 멘트",
+                    },
                     "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
                     "sensitive": {"type": "boolean"},
                 },
@@ -234,6 +252,8 @@ FOLLOWUP_SYSTEM_PROMPT = f"""사용자가 이미 한 번 분석한 기사 원문
 - 확신이 없으면 완곡한 표현을 쓰고, 모르면 지어내지 말고 "확인 필요"라고 표시한다.
 - 4~7문장으로 구체적인 수치·날짜·경위를 풀어서 답한다.
 - 문체는 보고서투가 아니라 친구에게 설명해주듯 편안한 구어체로 쓴다.
+- talk_line: explanation과 별개로, 답변의 핵심을 대화에서 그대로 뱉을 수 있는 구어체
+  한 문장으로 만든다("~하더라", "~래" 같은 말투). 설명 요약이 아니라 대화용 멘트여야 한다.
 - family는 질문의 성격에 가장 잘 맞는 것을 아래 7개 중에서 하나 고른다: {", ".join(AXIS_FAMILIES)}
 - 정치적으로 논쟁적인 일반화 주장을 다룰 때는 사실관계만 제시하고 sensitive: true로 표시한다.
 - web_search로 확인한 출처를 references에 최소 1개 이상 기록한다(source: 매체명, title: 제목,
@@ -244,11 +264,15 @@ FOLLOWUP_SYSTEM_PROMPT = f"""사용자가 이미 한 번 분석한 기사 원문
 FOLLOWUP_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["family", "title", "explanation", "confidence", "sensitive", "references"],
+    "required": ["family", "title", "explanation", "talk_line", "confidence", "sensitive", "references"],
     "properties": {
         "family": {"type": "string", "enum": AXIS_FAMILIES},
         "title": {"type": "string", "description": "이 축을 요약하는 짧은 제목"},
         "explanation": {"type": "string"},
+        "talk_line": {
+            "type": "string",
+            "description": "대화에서 그대로 뱉을 수 있는 구어체 한 문장 — explanation 요약이 아니라 대화용 멘트",
+        },
         "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
         "sensitive": {"type": "boolean"},
         "references": {

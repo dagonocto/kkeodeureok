@@ -90,12 +90,19 @@ def _reference_bullet(source: str, title: str, url: str | None) -> dict:
 
 
 def _axis_callout(axis: dict) -> dict:
-    """축 하나를 콜아웃 블록으로 만든다. 민감/저확신 표시를 라벨·본문에 덧붙인다."""
+    """축 하나를 콜아웃 블록으로 만든다. 민감/저확신 표시를 라벨·본문에 덧붙인다.
+
+    talk_line("말할 거리")이 있으면 본문 맨 끝에 💬로 구분해서 붙인다 — 이게 이 서비스의
+    핵심(대화에서 아는 척할 수 있는 한 줄)이라 설명과 시각적으로 구분되게 둔다.
+    """
     icon = FAMILY_ICONS.get(axis["family"], "💡")
     label = f"⚠️ {axis['title']}" if axis["sensitive"] else axis["title"]
     body = axis["explanation"]
     if axis["confidence"] == "low":
         body += "\n(확실하지 않음 — 확인 필요)"
+    talk_line = axis.get("talk_line")
+    if talk_line:
+        body += f"\n\n💬 {talk_line}"
     return _callout(icon, label, body)
 
 

@@ -117,6 +117,8 @@ def run_case(client: OpenAI, name: str, url: str, watch_for: list[str]) -> None:
         icon = "⚠️" if axis["sensitive"] else "  "
         print(f"\n{icon} [{axis['family']}] {axis['title']}")
         print(axis["explanation"])
+        if axis.get("talk_line"):
+            print(f"  💬 {axis['talk_line']}")
     print()
 
 
