@@ -12,6 +12,7 @@ Streamlit은 위에서부터 아래로 이 파일을 순서대로 실행해서 �
 import base64
 import concurrent.futures
 import json
+import re
 import time
 from urllib.parse import urlparse
 
@@ -158,6 +159,23 @@ def build_system_prompt() -> str:
     return f"{SYSTEM_PROMPT}\n\n## 사용자가 남긴 과거 피드백 (반드시 참고해서 같은 실수를 반복하지 말 것)\n{notes}"
 
 
+# web_search 인용을 구조화된 JSON 출력과 같이 쓰면, 가끔 텍스트 끝에 `}],` 같은 JSON
+# 구조 조각이 그대로 섞여 나온다 — 프롬프트로 "하지 마라"고 지시해도 완전히는 안 없어지는,
+# API 레벨에서 새는 현상으로 보여서 후처리로 한 번 더 걸러낸다.
+_TRAILING_ARTIFACT_RE = re.compile(r"[\}\]\,]{2,}\s*$")
+
+
+def _strip_trailing_artifacts(value):
+    """문자열 끝에 남은 `}],` 같은 조각을 지운다. dict/list는 재귀적으로 처리한다."""
+    if isinstance(value, str):
+        return _TRAILING_ARTIFACT_RE.sub("", value).rstrip()
+    if isinstance(value, list):
+        return [_strip_trailing_artifacts(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _strip_trailing_artifacts(v) for k, v in value.items()}
+    return value
+
+
 def analyze_article(document_block: dict, url: str) -> dict:
     """OpenAI API를 호출해서 기사 분석 결과(dict)를 받아온다."""
     client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
@@ -189,7 +207,7 @@ def analyze_article(document_block: dict, url: str) -> dict:
     # "web_search_call" 항목이 몇 개 있는지로 직접 세야 한다.
     search_calls = sum(1 for item in response.output if item.type == "web_search_call")
     cost = log_usage(response.usage.input_tokens, response.usage.output_tokens, search_calls)
-    data = json.loads(response.output_text)
+    data = _strip_trailing_artifacts(json.loads(response.output_text))
 
     # 모델이 언론사명을 못 찾으면 "확인 불가"를 돌려주는데, 그러면 Notion 페이지에
     # 출처가 아예 안 보인다. URL의 도메인이라도 있으면 그걸로 대신 채운다.
@@ -319,7 +337,7 @@ def answer_followup(document_block: dict, url: str, question: str) -> tuple[dict
 
     search_calls = sum(1 for item in response.output if item.type == "web_search_call")
     cost = log_usage(response.usage.input_tokens, response.usage.output_tokens, search_calls)
-    return json.loads(response.output_text), cost
+    return _strip_trailing_artifacts(json.loads(response.output_text)), cost
 
 
 def find_duplicate_page_url(target_url: str) -> str | None:
