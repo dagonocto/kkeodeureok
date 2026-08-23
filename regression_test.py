@@ -82,7 +82,12 @@ def run_case(secrets: dict, name: str, url: str, watch_for: list[str]) -> None:
         article_text = fetch_article_text(url)
         document_block = {"type": "input_text", "text": article_text}
         data, cost = analyze_article(
-            document_block, url, secrets["OPENAI_API_KEY"], secrets["PERPLEXITY_API_KEY"]
+            document_block,
+            url,
+            secrets["OPENAI_API_KEY"],
+            secrets["PERPLEXITY_API_KEY"],
+            secrets.get("NOTION_TOKEN"),
+            secrets.get("GLOSSARY_DATA_SOURCE_ID"),
         )
     except Exception as e:  # noqa: BLE001 - 테스트 스크립트라 넓게 잡고 다음 케이스로 넘어감
         print(f"에러: {e}\n")

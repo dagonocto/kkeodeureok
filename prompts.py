@@ -63,6 +63,11 @@ PLANNING_SYSTEM_PROMPT = f"""너는 뉴스 기사를 읽고 "어떤 배경지식
    시스템명(예: '112 종결 처리', '실종 프로파일링 시스템'처럼 단어만 봐서는 구체적으로 뭘
    하는 절차·시스템인지 알 수 없는 경우), 법률상 정의가 일상적 의미와 다른 용어, 외래어·
    약어는 뜻이 안 짐작되므로 남긴다.
+   이 축을 고르면 glossary_term에 그 용어의 짧고 표준적인 이름 하나를 적는다(예: "실효세율",
+   "112 신고 종결 처리", "위법수집증거 배제 원칙"). 이건 용어사전에 저장·재사용하는 키라서,
+   같은 개념이면 기사마다 항상 같은 표현으로 적어야 한다 — 수식어나 이 기사만의 맥락을
+   붙이지 않는다("2026년 제주 실종사건의 112 종결"이 아니라 그냥 "112 신고 종결 처리").
+   용어 뽀개기가 아닌 축은 glossary_term을 null로 둔다.
 2. 원리 뽀개기: 현상이 왜/어떻게 일어나는지의 메커니즘 자체(절차, 인과관계) — 그 현상을 둘러싼
    찬반이나 이해관계는 다루지 않는다. (신호: "왜"에 대한 설명이 생략됨)
    **이 축은 인과관계 주장이 핵심이라 근거 없이는 절대 안 된다.** "실종 사건은 초기 대응이
@@ -170,13 +175,17 @@ PLANNING_SCHEMA = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["family", "title", "research_query"],
+                "required": ["family", "title", "research_query", "glossary_term"],
                 "properties": {
                     "family": {"type": "string", "enum": AXIS_FAMILIES},
                     "title": {"type": "string", "description": "이 축을 요약하는 짧은 제목"},
                     "research_query": {
                         "type": "string",
                         "description": "이 축을 쓰는 데 필요한 사실을 확인하기 위해 검색 엔진에 그대로 전달할 구체적 질문",
+                    },
+                    "glossary_term": {
+                        "type": ["string", "null"],
+                        "description": "family가 '용어 뽀개기'일 때만: 용어사전에 저장·재사용할 표준 용어명. 그 외 family는 null",
                     },
                 },
             },

@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 
 from openai import OpenAI
 
+import glossary
 import perplexity_client
 from feedback import load_feedback_notes
 from prompts import PLANNING_SCHEMA, PLANNING_SYSTEM_PROMPT, WRITER_SCHEMA, WRITER_SYSTEM_PROMPT
@@ -67,15 +68,46 @@ def _research_one(axis_plan: dict, perplexity_api_key: str) -> tuple[dict, float
     return result, cost
 
 
-def _research(plan: dict, perplexity_api_key: str) -> tuple[list[dict], float]:
-    """2단계: 축마다 Perplexity로 research_query를 검색한다 — 축 개수만큼 동시에 실행해서,
-    순서대로 기다릴 때보다 전체 소요 시간을 크게 줄인다(가장 느린 검색 1건 시간에 수렴).
+def _research(
+    plan: dict, perplexity_api_key: str, notion_token: str | None, glossary_data_source_id: str | None
+) -> tuple[list[dict], float]:
+    """2단계: 축마다 research_query를 확인한다.
+
+    "용어 뽀개기" 축은 먼저 용어사전(Notion)에 이미 정의가 있는지 본다 — 있으면 검색 없이
+    재사용(비용 절감 + 같은 용어를 매번 다르게 설명하는 일 방지). 없는 축들만 Perplexity로
+    동시에 검색하고, 새로 검색된 용어는 다음에 재사용할 수 있게 사전에 저장한다.
+    용어사전이 설정 안 돼 있으면(notion_token/glossary_data_source_id가 없으면) 그냥 매번
+    검색하는 예전 방식으로 동작한다.
     """
     axes = plan["axes"]
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(axes)) as executor:
-        results = list(executor.map(lambda ap: _research_one(ap, perplexity_api_key), axes))
-    findings = [r for r, _ in results]
-    total_cost = sum(c for _, c in results)
+    glossary_enabled = bool(notion_token and glossary_data_source_id)
+    findings: list[dict | None] = [None] * len(axes)
+    to_search = []
+
+    for i, axis_plan in enumerate(axes):
+        term = axis_plan.get("glossary_term")
+        if glossary_enabled and axis_plan["family"] == "용어 뽀개기" and term:
+            cached = glossary.lookup(term, notion_token, glossary_data_source_id)
+            if cached:
+                findings[i] = {"query": axis_plan["research_query"], "answer": cached, "citations": []}
+                continue
+        to_search.append(i)
+
+    total_cost = 0.0
+    if to_search:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(to_search)) as executor:
+            searched = list(executor.map(lambda i: _research_one(axes[i], perplexity_api_key), to_search))
+        for i, (result, cost) in zip(to_search, searched):
+            findings[i] = result
+            total_cost += cost
+
+    if glossary_enabled:
+        for i in to_search:
+            axis_plan = axes[i]
+            term = axis_plan.get("glossary_term")
+            if axis_plan["family"] == "용어 뽀개기" and term:
+                glossary.save(term, findings[i]["answer"], notion_token, glossary_data_source_id)
+
     return findings, total_cost
 
 
@@ -109,12 +141,24 @@ def _write(client: OpenAI, document_block: dict, plan: dict, findings: list[dict
     return written, cost
 
 
-def analyze_article(document_block: dict, url: str, openai_api_key: str, perplexity_api_key: str) -> tuple[dict, float]:
-    """기사 하나를 분석한다. (기획 → 조사 → 작성), 결과와 총 비용을 돌려준다."""
+def analyze_article(
+    document_block: dict,
+    url: str,
+    openai_api_key: str,
+    perplexity_api_key: str,
+    notion_token: str | None = None,
+    glossary_data_source_id: str | None = None,
+) -> tuple[dict, float]:
+    """기사 하나를 분석한다. (기획 → 조사 → 작성), 결과와 총 비용을 돌려준다.
+
+    notion_token/glossary_data_source_id는 선택值이다 — 주면 "용어 뽀개기" 축에 용어사전
+    캐시를 쓰고, 안 주면(예: 아직 사전을 안 만들었거나 회귀 테스트) 매번 검색하는 예전
+    방식 그대로 동작한다.
+    """
     client = OpenAI(api_key=openai_api_key)
 
     plan, plan_cost = _plan(client, document_block, url)
-    findings, research_cost = _research(plan, perplexity_api_key)
+    findings, research_cost = _research(plan, perplexity_api_key, notion_token, glossary_data_source_id)
     written, write_cost = _write(client, document_block, plan, findings)
 
     # plan에도 "axes"가 있지만 research_query만 있는 기획 단계 버전이라, written의 완성된

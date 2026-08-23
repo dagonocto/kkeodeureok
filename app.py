@@ -155,7 +155,12 @@ def analyze_article(document_block: dict, url: str) -> tuple[dict, float]:
     """기사 분석 파이프라인(기획→조사→작성)을 실행한다. 실제 로직은 analysis_pipeline.py에 있다 —
     app.py(Streamlit)와 regression_test.py 양쪽에서 로직이 갈라지지 않도록 하기 위해서다."""
     return analysis_pipeline.analyze_article(
-        document_block, url, st.secrets["OPENAI_API_KEY"], st.secrets["PERPLEXITY_API_KEY"]
+        document_block,
+        url,
+        st.secrets["OPENAI_API_KEY"],
+        st.secrets["PERPLEXITY_API_KEY"],
+        st.secrets.get("NOTION_TOKEN"),
+        st.secrets.get("GLOSSARY_DATA_SOURCE_ID"),
     )
 
 
