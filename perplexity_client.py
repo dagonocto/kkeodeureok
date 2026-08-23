@@ -10,9 +10,17 @@ OpenAI의 web_search 도구는 검색 여부·횟수·깊이가 전적으로 모
 "high"/"xhigh"/"wide-research"로 바뀌었다 — 이름이 또 바뀌면 여기와 PRESET 상수만 고치면 된다.
 """
 
+import time
+
 import requests
 
 PERPLEXITY_API_URL = "https://api.perplexity.ai/v1/responses"
+
+# 축마다 동시에(병렬로) 검색을 쏘다 보니 순간적으로 초당 요청 수 제한(429)에 걸리는 경우가
+# 실측으로 확인됐다 — 기사 한 건에 축 3~4개를 한꺼번에 쏘는 구조라 이 앱에서는 특히 자주
+# 마주칠 수 있다. 완전히 실패로 넘기기 전에 짧게 쉬었다가 몇 번 더 시도해본다.
+MAX_RETRIES = 2
+RETRY_BACKOFF_SECONDS = 3
 
 # medium과 high는 둘 다 최대 15단계 다단계 브라우징을 하지만, high는 더 비싼 모델(GPT-5.6-Sol)을
 # 써서 복잡한 질문에서 비용이 예측 불가능하게 튄다 — 실측 결과 같은 질문에 high는 $0.25,
@@ -37,14 +45,28 @@ def search(query: str, api_key: str, preset: str = DEFAULT_PRESET) -> dict:
     돌려준다. citations는 [{"title", "url"}] 리스트, cost는 Perplexity가 직접 계산해준 달러 비용
     (usage.cost.total_cost) — 없으면 FALLBACK_COST_PER_CALL로 대략 추정한다.
 
-    실패하면 requests의 HTTPError를 그대로 던진다 — 호출하는 쪽(analysis_pipeline.py)에서
-    축 하나 실패로 전체 분석이 죽지 않게 처리한다.
+    429(요청 과다)나 타임아웃이면 짧게 쉬었다가 최대 MAX_RETRIES번 더 시도한다 — 축을 동시에
+    여러 개 검색하는 구조상 순간적으로 걸리는 경우가 있어서, 한 번 실패했다고 바로 포기하지
+    않는다. 그래도 실패하면 requests의 예외를 그대로 던진다 — 호출하는 쪽(analysis_pipeline.py)
+    에서 축 하나 실패로 전체 분석이 죽지 않게 처리한다.
     """
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     body = {"preset": preset, "input": query}
-    response = requests.post(PERPLEXITY_API_URL, headers=headers, json=body, timeout=60)
-    response.raise_for_status()
-    result = response.json()
+
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            response = requests.post(PERPLEXITY_API_URL, headers=headers, json=body, timeout=60)
+            if response.status_code == 429 and attempt < MAX_RETRIES:
+                time.sleep(RETRY_BACKOFF_SECONDS * (attempt + 1))
+                continue
+            response.raise_for_status()
+            result = response.json()
+            break
+        except requests.exceptions.Timeout:
+            if attempt < MAX_RETRIES:
+                time.sleep(RETRY_BACKOFF_SECONDS * (attempt + 1))
+                continue
+            raise
 
     # output 배열에는 두 종류의 항목이 섞여 온다 — type "search_results"(실제 검색된 URL·제목
     # 목록)와 type "message"(그 검색 결과를 종합한 최종 답변 텍스트). 답변 텍스트 안에는 "[4]"
