@@ -5,6 +5,7 @@ Claude가 만들어준 결과(JSON)를 받아서, 그걸 Notion이 이해하는 
 Notion API의 세부 형식은 몰라도 된다 — 이게 함수로 나누는(모듈화) 이유다.
 """
 
+import re
 from datetime import date
 
 import requests
@@ -51,16 +52,38 @@ def _link(content: str, url: str) -> dict:
     return {"type": "text", "text": {"content": content, "link": {"url": url}}}
 
 
-def _callout(icon_emoji: str, label: str, body: str) -> dict:
-    """콜아웃(강조 박스) 블록 하나를 만든다. label은 굵게, body는 보통 텍스트로."""
+def _callout(icon_emoji: str, label: str, body_runs: list[dict]) -> dict:
+    """콜아웃(강조 박스) 블록 하나를 만든다. label은 굵게, body_runs는 이미 만들어진 리치 텍스트 조각들."""
     return {
         "object": "block",
         "type": "callout",
         "callout": {
             "icon": {"type": "emoji", "emoji": icon_emoji},
-            "rich_text": [_text(f"{label}\n", bold=True), _text(body)],
+            "rich_text": [_text(f"{label}\n", bold=True), *body_runs],
         },
     }
+
+
+_BOLD_LINE_RE = re.compile(r"^\*\*(.+)\*\*$")
+
+
+def _explanation_to_rich_text(explanation: str) -> list[dict]:
+    """explanation 문자열(작성 단계 프롬프트가 넣는 마크다운 — 소제목은 `**굵게**` 한 줄,
+    나열형 사실은 `- ` 불릿)을 Notion 리치 텍스트 조각으로 바꾼다. Notion API는 마크다운을
+    자동 해석하지 않으므로, 굵게 표시할 부분은 우리가 직접 annotations.bold를 넣어줘야 한다.
+    """
+    runs = []
+    lines = explanation.split("\n")
+    for i, line in enumerate(lines):
+        suffix = "\n" if i < len(lines) - 1 else ""
+        bold_match = _BOLD_LINE_RE.match(line.strip())
+        if bold_match:
+            runs.append(_text(bold_match.group(1) + suffix, bold=True))
+        elif line.startswith("- "):
+            runs.append(_text("• " + line[2:] + suffix))
+        else:
+            runs.append(_text(line + suffix))
+    return runs
 
 
 def _heading2(content: str) -> dict:
@@ -97,13 +120,13 @@ def _axis_callout(axis: dict) -> dict:
     """
     icon = FAMILY_ICONS.get(axis["family"], "💡")
     label = f"⚠️ {axis['title']}" if axis["sensitive"] else axis["title"]
-    body = axis["explanation"]
+    body_runs = _explanation_to_rich_text(axis["explanation"])
     if axis["confidence"] == "low":
-        body += "\n(확실하지 않음 — 확인 필요)"
+        body_runs.append(_text("\n(확실하지 않음 — 확인 필요)"))
     talk_line = axis.get("talk_line")
     if talk_line:
-        body += f"\n\n💬 {talk_line}"
-    return _callout(icon, label, body)
+        body_runs.append(_text(f"\n\n💬 {talk_line}"))
+    return _callout(icon, label, body_runs)
 
 
 def build_children_blocks(data: dict) -> list[dict]:
