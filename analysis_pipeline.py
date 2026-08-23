@@ -63,7 +63,10 @@ def _research_one(axis_plan: dict, perplexity_api_key: str) -> tuple[dict, float
             result["input_tokens"], result["output_tokens"], result["cost"], result["preset"]
         )
     except Exception as e:  # noqa: BLE001 - 검색 실패 축 하나 때문에 전체를 죽이지 않는다
-        result = {"query": axis_plan["research_query"], "answer": f"(조사 실패: {e})", "citations": []}
+        print(f"[perplexity] 검색 실패 (query={axis_plan['research_query']!r}): {e}")
+        # 원본 예외 메시지(HTTP 상태 코드 등)를 그대로 넣으면 작성 단계가 "429 오류" 같은
+        # 내부 사정을 독자 대상 설명에 그대로 옮겨 적는 경우가 있었다 — 일반 독자용 문구로 남긴다.
+        result = {"query": axis_plan["research_query"], "answer": "이번 검색에서는 관련 자료를 확인하지 못했다.", "citations": []}
         cost = 0.0
     return result, cost
 
