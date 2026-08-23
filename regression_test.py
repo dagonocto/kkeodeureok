@@ -4,26 +4,23 @@
 직후 이 스크립트로 다시 돌려서 "예전에 고쳤던 문제가 이번 수정으로 재발하지 않았는지"를
 확인한다. 뉴스가 없는 날에도 언제든 검증할 수 있게 하는 게 목적이다.
 
+실제 분석 로직은 analysis_pipeline.py의 것을 그대로 가져다 쓴다 — app.py와 로직이
+갈라지지 않게 하기 위해서다.
+
 Notion에는 저장하지 않는다 — 테스트 결과가 실제 기록에 섞이면 안 되니까.
-usage_log.csv에는 정상적으로 비용이 기록된다(실제 API 호출이라 돈이 든다).
+usage_log.csv / perplexity_usage_log.csv에는 정상적으로 비용이 기록된다(실제 API
+호출이라 OpenAI + Perplexity 양쪽 다 돈이 든다).
 
 사용법:
     python regression_test.py            # 전체 테스트 케이스 실행
     python regression_test.py 제주        # 제목에 "제주"가 들어간 케이스만 실행
 """
 
-import json
 import sys
 import tomllib
 
-from openai import OpenAI
-
+from analysis_pipeline import analyze_article
 from fetch_article import fetch_article_text
-from prompts import RESPONSE_SCHEMA, SYSTEM_PROMPT
-from text_cleanup import strip_trailing_artifacts
-from usage_log import log_usage
-
-MODEL = "gpt-5.4-mini"
 
 # (기사 URL, 이 기사에서 과거에 어떤 문제가 있었는지 — 재발했는지 직접 눈으로 확인할 포인트)
 TEST_CASES = [
@@ -63,40 +60,7 @@ def load_secrets() -> dict:
         return tomllib.load(f)
 
 
-def analyze(client: OpenAI, article_text: str, url: str) -> tuple[dict, float]:
-    """app.py의 analyze_article과 같은 호출 방식 — Streamlit 없이 그대로 재현."""
-    instruction = f"이 기사 원문을 분석해줘. 원문 URL: {url}"
-    response = client.responses.create(
-        model=MODEL,
-        max_output_tokens=14000,
-        input=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "input_text", "text": article_text},
-                    {"type": "input_text", "text": instruction},
-                ],
-            },
-        ],
-        tools=[{"type": "web_search"}],
-        text={
-            "format": {
-                "type": "json_schema",
-                "name": "article_analysis",
-                "strict": True,
-                "schema": RESPONSE_SCHEMA,
-            }
-        },
-    )
-    if response.status != "completed":
-        raise RuntimeError(f"모델 응답이 끝까지 완료되지 않았어요 (status={response.status})")
-    search_calls = sum(1 for item in response.output if item.type == "web_search_call")
-    cost = log_usage(response.usage.input_tokens, response.usage.output_tokens, search_calls)
-    return strip_trailing_artifacts(json.loads(response.output_text)), cost
-
-
-def run_case(client: OpenAI, name: str, url: str, watch_for: list[str]) -> None:
+def run_case(secrets: dict, name: str, url: str, watch_for: list[str]) -> None:
     print("=" * 80)
     print(f"[{name}] {url}")
     print("확인할 점:")
@@ -106,7 +70,10 @@ def run_case(client: OpenAI, name: str, url: str, watch_for: list[str]) -> None:
 
     try:
         article_text = fetch_article_text(url)
-        data, cost = analyze(client, article_text, url)
+        document_block = {"type": "input_text", "text": article_text}
+        data, cost = analyze_article(
+            document_block, url, secrets["OPENAI_API_KEY"], secrets["PERPLEXITY_API_KEY"]
+        )
     except Exception as e:  # noqa: BLE001 - 테스트 스크립트라 넓게 잡고 다음 케이스로 넘어감
         print(f"에러: {e}\n")
         return
@@ -125,7 +92,6 @@ def run_case(client: OpenAI, name: str, url: str, watch_for: list[str]) -> None:
 def main():
     keyword = sys.argv[1] if len(sys.argv) > 1 else None
     secrets = load_secrets()
-    client = OpenAI(api_key=secrets["OPENAI_API_KEY"])
 
     cases = [c for c in TEST_CASES if keyword is None or keyword in c[0]]
     if not cases:
@@ -133,7 +99,7 @@ def main():
         return
 
     for name, url, watch_for in cases:
-        run_case(client, name, url, watch_for)
+        run_case(secrets, name, url, watch_for)
 
 
 if __name__ == "__main__":

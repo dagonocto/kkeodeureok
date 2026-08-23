@@ -13,16 +13,16 @@ import base64
 import concurrent.futures
 import json
 import time
-from urllib.parse import urlparse
 
 import streamlit as st
 import streamlit.components.v1 as components
 from openai import OpenAI
 
-from feedback import load_feedback_notes, save_feedback_note
+import analysis_pipeline
+from feedback import save_feedback_note
 from fetch_article import fetch_article_text
 from notion_client import append_axis_block, create_notion_page, list_recent_pages
-from prompts import FOLLOWUP_SCHEMA, FOLLOWUP_SYSTEM_PROMPT, RESPONSE_SCHEMA, SYSTEM_PROMPT
+from prompts import FOLLOWUP_SCHEMA, FOLLOWUP_SYSTEM_PROMPT
 from text_cleanup import strip_trailing_artifacts
 from usage_log import log_usage, total_cost
 
@@ -151,55 +151,12 @@ def build_document_block(file) -> dict:
     return {"type": "input_text", "text": raw_bytes.decode("utf-8")}
 
 
-def build_system_prompt() -> str:
-    """기본 지침 + 지금까지 쌓인 피드백을 합쳐서 최종 지침을 만든다."""
-    notes = load_feedback_notes()
-    if not notes:
-        return SYSTEM_PROMPT
-    return f"{SYSTEM_PROMPT}\n\n## 사용자가 남긴 과거 피드백 (반드시 참고해서 같은 실수를 반복하지 말 것)\n{notes}"
-
-
-def analyze_article(document_block: dict, url: str) -> dict:
-    """OpenAI API를 호출해서 기사 분석 결과(dict)를 받아온다."""
-    client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-
-    instruction = f"이 기사 원문을 분석해줘. 원문 URL: {url if url else '없음(파일로만 제공됨)'}"
-
-    response = client.responses.create(
-        model=MODEL,
-        max_output_tokens=14000,
-        input=[
-            {"role": "system", "content": build_system_prompt()},
-            {"role": "user", "content": [document_block, {"type": "input_text", "text": instruction}]},
-        ],
-        tools=[{"type": "web_search"}],
-        text={
-            "format": {
-                "type": "json_schema",
-                "name": "article_analysis",
-                "strict": True,
-                "schema": RESPONSE_SCHEMA,
-            }
-        },
+def analyze_article(document_block: dict, url: str) -> tuple[dict, float]:
+    """기사 분석 파이프라인(기획→조사→작성)을 실행한다. 실제 로직은 analysis_pipeline.py에 있다 —
+    app.py(Streamlit)와 regression_test.py 양쪽에서 로직이 갈라지지 않도록 하기 위해서다."""
+    return analysis_pipeline.analyze_article(
+        document_block, url, st.secrets["OPENAI_API_KEY"], st.secrets["PERPLEXITY_API_KEY"]
     )
-
-    if response.status != "completed":
-        raise RuntimeError(f"모델 응답이 끝까지 완료되지 않았어요 (status={response.status})")
-
-    # web_search 사용 요금은 response.usage에 안 잡히고, response.output 안에
-    # "web_search_call" 항목이 몇 개 있는지로 직접 세야 한다.
-    search_calls = sum(1 for item in response.output if item.type == "web_search_call")
-    cost = log_usage(response.usage.input_tokens, response.usage.output_tokens, search_calls)
-    data = strip_trailing_artifacts(json.loads(response.output_text))
-
-    # 모델이 언론사명을 못 찾으면 "확인 불가"를 돌려주는데, 그러면 Notion 페이지에
-    # 출처가 아예 안 보인다. URL의 도메인이라도 있으면 그걸로 대신 채운다.
-    if data.get("source_name") in (None, "", "확인 불가") and url:
-        domain = urlparse(url).netloc.removeprefix("www.")
-        if domain:
-            data["source_name"] = domain
-
-    return data, cost
 
 
 # 축 패밀리마다 다른 아이콘 — notion_client.py의 FAMILY_ICONS와 짝을 맞춘다.

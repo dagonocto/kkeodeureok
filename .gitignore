@@ -4,5 +4,6 @@ __pycache__/
 *.pyc
 .venv/
 usage_log.csv
+perplexity_usage_log.csv
 lessons.md
 야간_테스트_리포트_*.md
