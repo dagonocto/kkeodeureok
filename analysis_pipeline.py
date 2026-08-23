@@ -11,6 +11,7 @@ app.py(Streamlit 웹앱)와 regression_test.py(회귀 테스트) 양쪽에서 �
 검색을 강제로 수행한다.
 """
 
+import concurrent.futures
 import json
 from urllib.parse import urlparse
 
@@ -51,24 +52,31 @@ def _plan(client: OpenAI, document_block: dict, url: str) -> tuple[dict, float]:
     return json.loads(response.output_text), cost
 
 
-def _research(plan: dict, perplexity_api_key: str) -> tuple[list[dict], float]:
-    """2단계: 축마다 Perplexity로 research_query를 실제로 검색한다.
-
-    축 하나가 검색에 실패해도(네트워크 오류 등) 전체 분석이 죽지 않도록, 실패한 축은
-    "조사 실패"로 표시해서 넘긴다 — writer 단계에서 이 축을 빼거나 원문만으로 쓸지 판단한다.
+def _research_one(axis_plan: dict, perplexity_api_key: str) -> tuple[dict, float]:
+    """축 하나의 research_query를 Perplexity로 검색한다. 실패해도 예외를 던지지 않고
+    "조사 실패"로 표시해서 돌려준다 — 축 하나가 실패해도 전체 분석이 죽지 않도록.
     """
-    findings = []
-    cost = 0.0
-    for axis_plan in plan["axes"]:
-        try:
-            result = perplexity_client.search(axis_plan["research_query"], perplexity_api_key)
-            cost += log_perplexity_usage(
-                result["input_tokens"], result["output_tokens"], result["cost"], result["preset"]
-            )
-        except Exception as e:  # noqa: BLE001 - 검색 실패 축 하나 때문에 전체를 죽이지 않는다
-            result = {"query": axis_plan["research_query"], "answer": f"(조사 실패: {e})", "citations": []}
-        findings.append(result)
-    return findings, cost
+    try:
+        result = perplexity_client.search(axis_plan["research_query"], perplexity_api_key)
+        cost = log_perplexity_usage(
+            result["input_tokens"], result["output_tokens"], result["cost"], result["preset"]
+        )
+    except Exception as e:  # noqa: BLE001 - 검색 실패 축 하나 때문에 전체를 죽이지 않는다
+        result = {"query": axis_plan["research_query"], "answer": f"(조사 실패: {e})", "citations": []}
+        cost = 0.0
+    return result, cost
+
+
+def _research(plan: dict, perplexity_api_key: str) -> tuple[list[dict], float]:
+    """2단계: 축마다 Perplexity로 research_query를 검색한다 — 축 개수만큼 동시에 실행해서,
+    순서대로 기다릴 때보다 전체 소요 시간을 크게 줄인다(가장 느린 검색 1건 시간에 수렴).
+    """
+    axes = plan["axes"]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(axes)) as executor:
+        results = list(executor.map(lambda ap: _research_one(ap, perplexity_api_key), axes))
+    findings = [r for r, _ in results]
+    total_cost = sum(c for _, c in results)
+    return findings, total_cost
 
 
 def _write(client: OpenAI, document_block: dict, plan: dict, findings: list[dict]) -> tuple[dict, float]:
