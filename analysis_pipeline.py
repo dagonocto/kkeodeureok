@@ -70,14 +70,17 @@ def _research_one(axis_plan: dict, perplexity_api_key: str) -> tuple[dict, float
 
 def _research(
     plan: dict, perplexity_api_key: str, notion_token: str | None, glossary_data_source_id: str | None
-) -> tuple[list[dict], float]:
+) -> tuple[list[dict], dict[str, str], float]:
     """2단계: 축마다 research_query를 확인한다.
 
     "용어 뽀개기" 축은 먼저 용어사전(Notion)에 이미 정의가 있는지 본다 — 있으면 검색 없이
     재사용(비용 절감 + 같은 용어를 매번 다르게 설명하는 일 방지). 없는 축들만 Perplexity로
-    동시에 검색하고, 새로 검색된 용어는 다음에 재사용할 수 있게 사전에 저장한다.
-    용어사전이 설정 안 돼 있으면(notion_token/glossary_data_source_id가 없으면) 그냥 매번
-    검색하는 예전 방식으로 동작한다.
+    동시에 검색한다. 용어사전이 설정 안 돼 있으면(notion_token/glossary_data_source_id가
+    없으면) 그냥 매번 검색하는 예전 방식으로 동작한다.
+
+    저장은 여기서 하지 않는다 — 검색 결과가 실제로 쓸 만한지는 작성 단계가 끝나야 알 수
+    있어서(예: 근거 부실해서 축 자체를 버리는 경우), 새로 검색된 (term, 정의) 후보만
+    fresh_terms로 돌려주고, 실제 저장 여부는 write 이후 _save_new_glossary_terms가 판단한다.
     """
     axes = plan["axes"]
     glossary_enabled = bool(notion_token and glossary_data_source_id)
@@ -101,14 +104,32 @@ def _research(
             findings[i] = result
             total_cost += cost
 
+    fresh_terms = {}
     if glossary_enabled:
         for i in to_search:
             axis_plan = axes[i]
             term = axis_plan.get("glossary_term")
             if axis_plan["family"] == "용어 뽀개기" and term:
-                glossary.save(term, findings[i]["answer"], notion_token, glossary_data_source_id)
+                fresh_terms[term] = findings[i]["answer"]
 
-    return findings, total_cost
+    return findings, fresh_terms, total_cost
+
+
+def _save_new_glossary_terms(
+    written_axes: list[dict], fresh_terms: dict[str, str], notion_token: str, glossary_data_source_id: str
+) -> None:
+    """새로 검색된 용어 중, 작성 단계가 실제로 채택하고 confidence를 "low"로 두지 않은
+    것만 용어사전에 저장한다. 근거 부실해서 작성 단계가 버린 축이나, 확신 없다고 표시한
+    정의는 저장하지 않는다 — 틀렸을 수도 있는 내용이 그대로 굳어버리는 걸 막기 위해서다.
+    """
+    kept_terms = {
+        axis["glossary_term"]
+        for axis in written_axes
+        if axis["family"] == "용어 뽀개기" and axis.get("glossary_term") and axis["confidence"] != "low"
+    }
+    for term, definition in fresh_terms.items():
+        if term in kept_terms:
+            glossary.save(term, definition, notion_token, glossary_data_source_id)
 
 
 def _write(client: OpenAI, document_block: dict, plan: dict, findings: list[dict]) -> tuple[dict, float]:
@@ -158,8 +179,11 @@ def analyze_article(
     client = OpenAI(api_key=openai_api_key)
 
     plan, plan_cost = _plan(client, document_block, url)
-    findings, research_cost = _research(plan, perplexity_api_key, notion_token, glossary_data_source_id)
+    findings, fresh_terms, research_cost = _research(plan, perplexity_api_key, notion_token, glossary_data_source_id)
     written, write_cost = _write(client, document_block, plan, findings)
+
+    if fresh_terms and notion_token and glossary_data_source_id:
+        _save_new_glossary_terms(written["axes"], fresh_terms, notion_token, glossary_data_source_id)
 
     # plan에도 "axes"가 있지만 research_query만 있는 기획 단계 버전이라, written의 완성된
     # axes로 덮어쓴다.

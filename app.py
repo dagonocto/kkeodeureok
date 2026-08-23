@@ -19,6 +19,7 @@ import streamlit.components.v1 as components
 from openai import OpenAI
 
 import analysis_pipeline
+import glossary
 from feedback import save_feedback_note
 from fetch_article import fetch_article_text
 from notion_client import append_axis_block, create_notion_page, list_recent_pages
@@ -225,6 +226,12 @@ def render_result(data: dict, key_prefix: str = "") -> None:
                     with down_col:
                         if st.button("👎", key=f"{key_prefix}axis_down_{i}"):
                             save_feedback_note(f"[{axis['family']}] '{axis['title']}' 축이 별로였음 — 개선 필요")
+                            # 용어 뽀개기 축이면 사전 항목도 같이 지운다 — 틀린 정의가
+                            # 계속 재사용되지 않도록, 다음엔 다시 검색해서 새로 쓰게 한다.
+                            glossary_term = axis.get("glossary_term")
+                            glossary_ds_id = st.secrets.get("GLOSSARY_DATA_SOURCE_ID")
+                            if glossary_term and glossary_ds_id:
+                                glossary.delete(glossary_term, st.secrets["NOTION_TOKEN"], glossary_ds_id)
                             st.toast("피드백 저장했어요.")
     else:
         st.caption("배경지식 없이도 이해할 수 있는 기사로 판단돼, 별도 설명은 생략했어요.")

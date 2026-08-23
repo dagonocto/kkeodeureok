@@ -211,6 +211,12 @@ WRITER_SYSTEM_PROMPT = f"""너는 이미 기획된 축(axis)들에 대해, 조�
   인용한다. 같은 사실에 여러 출처가 있으면 법령 > 공식 통계·보도자료 > 전문가 코멘트 > 언론
   순으로 우선한다.
 - 기사 본문에 이미 나온 내용은 반복하지 않는다.
+- glossary_term: 기획 단계에서 이 축에 부여된 glossary_term 값을 그대로 돌려준다(용어사전에
+  저장해도 될 만큼 검증됐다는 뜻은 아니다 — 저장 여부는 이후 confidence로 별도 판단된다).
+  이 축을 아예 빼기로 했다면 당연히 반환하지 않는다.
+- confidence를 "low"로 표시한 용어 뽀개기 축은 나중에 용어사전에 저장되지 않는다 —
+  확신 없는 정의가 반복 재사용되는 걸 막기 위해서다. 그러니 확신이 부족하면 "low"로
+  솔직하게 표시한다. 억지로 "medium" 이상으로 부풀리지 않는다.
 
 ## 분량과 구조
 축 하나당 최소 10문장 이상(목표 15문장 안팎) — 이건 권장이 아니라 하한선이다. 유튜브 경제
@@ -299,7 +305,7 @@ WRITER_SCHEMA = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["family", "title", "explanation", "talk_line", "confidence", "sensitive"],
+                "required": ["family", "title", "explanation", "talk_line", "confidence", "sensitive", "glossary_term"],
                 "properties": {
                     "family": {"type": "string", "enum": AXIS_FAMILIES},
                     "title": {"type": "string", "description": "이 축을 요약하는 짧은 제목"},
@@ -310,6 +316,10 @@ WRITER_SCHEMA = {
                     },
                     "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
                     "sensitive": {"type": "boolean"},
+                    "glossary_term": {
+                        "type": ["string", "null"],
+                        "description": "기획 단계에서 이 축에 준 glossary_term을 그대로 돌려준다. 이 축이 용어 뽀개기가 아니거나 기획 단계 값이 null이면 null.",
+                    },
                 },
             },
         },

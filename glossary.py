@@ -51,6 +51,36 @@ def lookup(term: str, notion_token: str, data_source_id: str) -> str | None:
     return "".join(t["plain_text"] for t in rich_text) or None
 
 
+def delete(term: str, notion_token: str, data_source_id: str) -> None:
+    """용어사전에서 term과 일치하는 항목을 지운다(휴지통 이동).
+
+    사용자가 화면에서 "이 용어 설명 별로였음"을 눌렀을 때 호출한다 — 다음 번엔 이 용어가
+    사전에 없으니 새로 검색해서 다시 쓰게 된다. 조회/삭제 둘 다 실패해도 조용히 넘어간다 —
+    사전 삭제가 안 됐다고 피드백 저장 자체가 실패해 보이면 안 되기 때문이다.
+    """
+    try:
+        body = {"filter": {"property": "용어", "title": {"equals": term}}, "page_size": 1}
+        response = requests.post(
+            f"https://api.notion.com/v1/data_sources/{data_source_id}/query",
+            headers=_headers(notion_token),
+            json=body,
+            timeout=15,
+        )
+        response.raise_for_status()
+        results = response.json()["results"]
+        if not results:
+            return
+        page_id = results[0]["id"]
+        requests.patch(
+            f"https://api.notion.com/v1/pages/{page_id}",
+            headers=_headers(notion_token),
+            json={"archived": True},
+            timeout=15,
+        ).raise_for_status()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def save(term: str, definition: str, notion_token: str, data_source_id: str) -> None:
     """용어사전에 새 용어를 추가한다. 실패해도 예외를 삼킨다 — 사전 저장은 부가 기능이라
     이것 때문에 기사 분석 자체가 실패해 보이면 안 된다.
