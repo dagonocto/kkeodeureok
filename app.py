@@ -17,9 +17,11 @@ import time
 import streamlit as st
 import streamlit.components.v1 as components
 from openai import OpenAI
+from streamlit_autorefresh import st_autorefresh
 
 import analysis_pipeline
 import glossary
+import story_thread
 from feedback import save_feedback_note
 from fetch_article import fetch_article_text
 from notion_client import append_axis_block, create_notion_page, list_recent_pages
@@ -97,6 +99,51 @@ if "dup_warning_url" not in st.session_state:
     # 그 URL을 잠깐 담아뒀다가 사용자가 "그래도 다시 분석하기"를 눌러야 진행한다.
     st.session_state.dup_warning_url = None
     st.session_state.dup_page_url = None
+
+
+def render_story_timeline_carousel() -> None:
+    """이어지는 사안(연관 시리즈)을 첫 화면 상단에 타임라인으로 보여준다.
+
+    최근 저장된 기사들을 "연관 시리즈" 이름으로 묶어서, 2개 이상 모인 시리즈만
+    후보로 삼는다. st_autorefresh로 일정 시간마다 화면을 다시 그리게 만들고,
+    그 카운터를 후보 개수로 나눈 나머지로 "지금 보여줄 시리즈"를 고른다 — 광고
+    배너가 시간이 지나면 다른 광고로 바뀌는 것과 같은 방식이다.
+    """
+    try:
+        recent = list_recent_pages(st.secrets["NOTION_TOKEN"], st.secrets["NOTION_DATA_SOURCE_ID"], limit=60)
+    except Exception:  # noqa: BLE001 - 타임라인을 못 불러와도 나머지 화면은 정상 동작해야 한다
+        return
+
+    threads: dict[str, list[dict]] = {}
+    for page in recent:
+        if page["thread"]:
+            threads.setdefault(page["thread"], []).append(page)
+    threads = {name: pages for name, pages in threads.items() if len(pages) >= 2}
+    if not threads:
+        return
+
+    # 최근에 갱신된 시리즈부터 순서대로 순환하도록 정렬(각 시리즈의 최신 기사 날짜 기준).
+    thread_names = sorted(
+        threads.keys(),
+        key=lambda name: max(p["date"] or "" for p in threads[name]),
+        reverse=True,
+    )
+
+    tick = st_autorefresh(interval=8000, key="story_timeline_tick")
+    current_name = thread_names[tick % len(thread_names)]
+    articles = sorted(threads[current_name], key=lambda p: p["date"] or "")
+
+    with st.container(border=True):
+        dots = "".join("●" if i == tick % len(thread_names) else "○" for i in range(len(thread_names)))
+        st.markdown(f"**🧵 이어지는 사안 · {current_name}**  <span style='color:gray'>{dots}</span>", unsafe_allow_html=True)
+        cols = st.columns(len(articles))
+        for col, article in zip(cols, articles):
+            with col:
+                st.caption(article["date"] or "")
+                st.markdown(f"[{article['title']}]({article['url']})")
+
+
+render_story_timeline_carousel()
 
 with st.expander("📚 최근 기록"):
     try:
@@ -252,6 +299,16 @@ def save_to_notion(result: dict):
     돈을 또 내고 분석을 다시 할 필요가 없도록 하기 위해서다.
     """
     try:
+        thread_name, thread_cost = story_thread.assign_thread(
+            st.secrets["OPENAI_API_KEY"],
+            result,
+            st.secrets["NOTION_TOKEN"],
+            st.secrets["NOTION_DATA_SOURCE_ID"],
+        )
+        if thread_name:
+            result["thread_name"] = thread_name
+        if st.session_state.last_cost is not None:
+            st.session_state.last_cost += thread_cost
         page_url, page_id = create_notion_page(
             result,
             notion_token=st.secrets["NOTION_TOKEN"],

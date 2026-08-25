@@ -161,6 +161,8 @@ def build_properties(data: dict) -> dict:
     }
     if data["source_url"]:
         properties["출처 URL"] = {"url": data["source_url"]}
+    if data.get("thread_name"):
+        properties["연관 시리즈"] = {"rich_text": [_text(data["thread_name"])]}
     return properties
 
 
@@ -202,10 +204,12 @@ def append_axis_block(page_id: str, axis: dict, notion_token: str) -> None:
 
 
 def list_recent_pages(notion_token: str, data_source_id: str, limit: int = 10) -> list[dict]:
-    """최근 저장한 기사 목록을 가져온다. 각 항목은 title/category/url/source_url을 담은 dict.
+    """최근 저장한 기사 목록을 가져온다. 각 항목은 id/title/category/url/source_url/date/thread를 담은 dict.
 
     source_url은 "이미 분석한 기사인지" 중복 체크에 쓰인다 — app.py에서 새로 입력된
     기사 URL이 이 목록의 source_url과 겹치면 재분석 전에 사용자에게 물어본다.
+    thread는 "연관 시리즈" 값(story_thread.py가 기사끼리 연결할 때 쓰는 이름) — 아직
+    안 붙어 있으면 None이다.
     """
     headers = {
         "Authorization": f"Bearer {notion_token}",
@@ -226,5 +230,32 @@ def list_recent_pages(notion_token: str, data_source_id: str, limit: int = 10) -
         title = title_runs[0]["plain_text"] if title_runs else "(제목 없음)"
         category = (props.get("분야", {}).get("select") or {}).get("name", "")
         source_url = (props.get("출처 URL") or {}).get("url")
-        pages.append({"title": title, "category": category, "url": page["url"], "source_url": source_url})
+        thread_runs = (props.get("연관 시리즈") or {}).get("rich_text", [])
+        thread = thread_runs[0]["plain_text"] if thread_runs else None
+        date_info = (props.get("날짜") or {}).get("date") or {}
+        pages.append({
+            "id": page["id"],
+            "title": title,
+            "category": category,
+            "url": page["url"],
+            "source_url": source_url,
+            "date": date_info.get("start"),
+            "thread": thread or None,
+        })
     return pages
+
+
+def set_thread_name(page_id: str, thread_name: str, notion_token: str) -> None:
+    """이미 저장된 페이지에 "연관 시리즈" 이름을 소급해서 붙인다(속성만 갱신, 본문은 그대로).
+
+    story_thread.py가 "이 새 기사는 예전에 저장된 저 기사의 후속이다"라고 판단했는데
+    그 예전 기사에 아직 시리즈 이름이 없을 때, 두 기사를 같은 이름으로 묶기 위해 쓴다.
+    """
+    headers = {
+        "Authorization": f"Bearer {notion_token}",
+        "Notion-Version": NOTION_VERSION,
+        "Content-Type": "application/json",
+    }
+    body = {"properties": {"연관 시리즈": {"rich_text": [_text(thread_name)]}}}
+    response = requests.patch(f"https://api.notion.com/v1/pages/{page_id}", headers=headers, json=body, timeout=30)
+    response.raise_for_status()
