@@ -45,7 +45,7 @@ st.markdown(
             --kd-bg: #f6f8fc;
             --kd-surface: #ffffff;
             --kd-surface-2: #eef2fa;
-            --kd-border: #e3e8f2;
+            --kd-border: #cdd6e8;
             --kd-ink: #16203a;
             --kd-ink-dim: #57607d;
             --kd-accent: #2f6fed;
@@ -58,7 +58,9 @@ st.markdown(
             background: var(--kd-bg) !important;
         }
 
-        [data-testid="stAppViewContainer"] * {
+        /* stIconMaterial은 화살표 등을 "keyboard_arrow_right" 같은 텍스트를 전용 아이콘 폰트로
+           그려서 보여주는 요소라, 여기에 Pretendard를 강제하면 아이콘이 그냥 글자로 깨져 보인다. */
+        [data-testid="stAppViewContainer"] *:not([data-testid="stIconMaterial"]) {
             font-family: "Pretendard", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo",
                 "Malgun Gothic", "Segoe UI", sans-serif !important;
             color: var(--kd-ink);
