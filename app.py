@@ -31,6 +31,108 @@ from usage_log import log_usage, total_cost
 MODEL = "gpt-5.4-mini"
 
 st.set_page_config(page_title="꺼드럭", page_icon="😎", layout="wide")
+
+# 전체적인 톤을 다듬는 CSS. Streamlit 기본 스타일(회색 테두리 박스, 시스템 폰트)을
+# data-testid 선택자로 덮어쓴다 — 내부 클래스명(st-emotion-cache-...)은 버전마다
+# 바뀌어서 깨지기 쉽지만, data-testid는 Streamlit이 안정적으로 유지하는 값이라 이걸 기준으로 잡는다.
+# 카드형 박스(st.container(border=True, key=...))는 key로 붙는 st-key-* 클래스를 기준으로 잡는다.
+st.markdown(
+    """
+    <link rel="stylesheet" as="style" crossorigin
+      href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css" />
+    <style>
+        :root {
+            --kd-bg: #f6f8fc;
+            --kd-surface: #ffffff;
+            --kd-surface-2: #eef2fa;
+            --kd-border: #cdd6e8;
+            --kd-ink: #16203a;
+            --kd-ink-dim: #57607d;
+            --kd-accent: #2f6fed;
+            --kd-accent-ink: #ffffff;
+            --kd-accent-tint: #e9f0fe;
+            --kd-shadow: 0 1px 2px rgba(22, 32, 58, 0.04), 0 10px 24px rgba(22, 32, 58, 0.06);
+        }
+
+        html, body, [data-testid="stAppViewContainer"], [data-testid="stHeader"] {
+            background: var(--kd-bg) !important;
+        }
+
+        /* stIconMaterial은 화살표 등을 "keyboard_arrow_right" 같은 텍스트를 전용 아이콘 폰트로
+           그려서 보여주는 요소라, 여기에 Pretendard를 강제하면 아이콘이 그냥 글자로 깨져 보인다. */
+        [data-testid="stAppViewContainer"] *:not([data-testid="stIconMaterial"]) {
+            font-family: "Pretendard", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo",
+                "Malgun Gothic", "Segoe UI", sans-serif !important;
+            color: var(--kd-ink);
+        }
+
+        h1 {
+            font-weight: 800 !important;
+            letter-spacing: -0.02em;
+        }
+
+        .st-key-kd-timeline-box, .st-key-kd-input-box, .st-key-kd-result-box, .st-key-kd-feedback-box {
+            background: var(--kd-surface) !important;
+            border: 1px solid var(--kd-border) !important;
+            border-radius: 16px !important;
+            box-shadow: var(--kd-shadow);
+        }
+
+        [class*="st-key-kd-axis-card"] {
+            background: var(--kd-surface) !important;
+            border: 1px solid var(--kd-border) !important;
+            border-radius: 14px !important;
+            box-shadow: var(--kd-shadow);
+            transition: box-shadow 0.15s ease, transform 0.15s ease;
+        }
+
+        [class*="st-key-kd-axis-card"]:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 2px 4px rgba(22, 32, 58, 0.06), 0 14px 28px rgba(22, 32, 58, 0.1);
+        }
+
+        [data-testid="stExpander"] {
+            border: 1px solid var(--kd-border) !important;
+            border-radius: 12px !important;
+            background: var(--kd-surface) !important;
+            overflow: hidden;
+        }
+
+        [data-testid="stTextInput"] input {
+            border-radius: 10px !important;
+            border: 1px solid var(--kd-border) !important;
+            background: var(--kd-surface-2) !important;
+        }
+
+        [data-testid="stTextInput"] input:focus {
+            border-color: var(--kd-accent) !important;
+            box-shadow: 0 0 0 3px var(--kd-accent-tint) !important;
+        }
+
+        [data-testid="stButton"] button {
+            border-radius: 10px !important;
+            font-weight: 600 !important;
+            transition: transform 0.1s ease, box-shadow 0.15s ease;
+        }
+
+        [data-testid="stButton"] button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(47, 111, 237, 0.18);
+        }
+
+        [data-testid="stButton"] button[kind="primary"] {
+            background: var(--kd-accent) !important;
+            border-color: var(--kd-accent) !important;
+        }
+
+        [data-testid="stProgress"] > div > div > div {
+            background: var(--kd-accent) !important;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 st.title("😎 꺼드럭")
 st.write("깊게는 몰라도, 대화에서 꺼드럭댈 수 있게. 기사 원문(PDF, 이미지, 텍스트)을 올리면 배경지식과 해설을 만들어 Notion에 저장해줘요.")
 
@@ -148,7 +250,7 @@ def render_story_timeline_carousel() -> None:
     current_name = thread_names[idx]
     articles = sorted(threads[current_name], key=lambda p: p["date"] or "")
 
-    with st.container(border=True):
+    with st.container(border=True, key="kd-timeline-box"):
         st.markdown("<span style='font-size:1.2rem; font-weight:700;'>🧵 흘러온 이야기</span>", unsafe_allow_html=True)
         nav_prev, nav_label, nav_next = st.columns([1, 10, 1])
         with nav_prev:
@@ -188,7 +290,7 @@ with st.expander("📚 최근 기록"):
         for page in recent:
             st.markdown(f"- [{page['title']}]({page['url']}) · {page['category']}")
 
-with st.container(border=True):
+with st.container(border=True, key="kd-input-box"):
     # Streamlit은 위젯이 이미 그려진 뒤에는 그 위젯의 session_state를 직접 바꿀 수 없다.
     # 그래서 "지금 비워라" 표시만 미리 남겨두고, 위젯을 그리기 *전에* 그 표시를 보고
     # 비운 다음 표시를 내린다 — 다음 실행(rerun)에서만 적용되는 방식이다.
@@ -280,7 +382,7 @@ def render_result(data: dict, key_prefix: str = "") -> None:
         for i, axis in enumerate(data["axes"]):
             col = left if i % 2 == 0 else right
             with col:
-                with st.container(border=True):
+                with st.container(border=True, key=f"{key_prefix}kd-axis-card-{i}"):
                     icon = FAMILY_ICONS.get(axis["family"], "💡")
                     label = f"⚠️ {axis['title']}" if axis["sensitive"] else axis["title"]
                     st.markdown(f"**{icon} {label}**")
@@ -486,7 +588,7 @@ if st.session_state.dup_warning_url:
 
 if st.session_state.result:
     st.write("")
-    with st.container(border=True):
+    with st.container(border=True, key="kd-result-box"):
         if st.session_state.page_url:
             st.success("완료! Notion에 저장됐어요.")
             st.markdown(f"[Notion에서 열기]({st.session_state.page_url})")
@@ -530,7 +632,7 @@ if st.session_state.result:
                         st.rerun()  # 방금 추가된 축이 위쪽 결과 화면에 바로 보이도록 다시 그린다
 
     st.write("")
-    with st.container(border=True):
+    with st.container(border=True, key="kd-feedback-box"):
         st.subheader("📝 피드백")
         st.caption("아쉬운 점을 적어두면 다음 실행부터 지침에 반영돼요.")
         feedback_text = st.text_area("피드백", label_visibility="collapsed")
