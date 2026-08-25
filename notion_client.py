@@ -156,7 +156,7 @@ def build_properties(data: dict) -> dict:
         "날짜": {"date": {"start": data.get("published_date") or date.today().isoformat()}},
         "분야": {"select": {"name": data["category"]}},
         "출처명": {"rich_text": [_text(data["source_name"])]},
-        "행정학 키워드": {"multi_select": [{"name": kw} for kw in data["keywords"]]},
+        "키워드": {"multi_select": [{"name": kw} for kw in data["keywords"]]},
         "주요 뉴스": {"checkbox": False},
     }
     if data["source_url"]:
