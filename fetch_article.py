@@ -25,8 +25,13 @@ REQUEST_HEADERS = {
 }
 
 
-def fetch_article_text(url: str) -> str:
-    """URL에서 기사 본문 텍스트를 추출한다. 실패하면 예외를 던진다."""
+def fetch_article(url: str) -> tuple[str, str | None]:
+    """URL에서 (기사 본문 텍스트, 실제 발행일 "YYYY-MM-DD" 또는 None)을 함께 추출한다.
+
+    발행일은 trafilatura가 HTML 안의 메타 태그·날짜 표기를 분석해서 뽑아준다(htmldate 기반).
+    사이트에 따라 못 찾을 수도 있는데, 그럴 땐 None을 돌려주고 호출하는 쪽이 오늘 날짜 등으로
+    대체하면 된다 — 발행일을 못 찾았다고 분석 자체를 실패시키지 않는다.
+    """
     try:
         response = requests.get(url, headers=REQUEST_HEADERS, timeout=20)
         response.raise_for_status()
@@ -43,4 +48,19 @@ def fetch_article_text(url: str) -> str:
             "이 페이지에서 본문을 뽑아내지 못했어요. "
             "로그인이 필요한 기사이거나 크롤링이 막혀있을 수 있어요 — 파일 업로드로 시도해주세요."
         )
+
+    published_date = None
+    try:
+        meta = trafilatura.extract_metadata(downloaded, default_url=url)
+        if meta and meta.date:
+            published_date = meta.date
+    except Exception:  # noqa: BLE001 - 발행일 추출 실패는 본문 추출 성공 자체를 막지 않는다
+        pass
+
+    return text, published_date
+
+
+def fetch_article_text(url: str) -> str:
+    """하위 호환용 — 본문 텍스트만 필요할 때(회귀 테스트 등, 발행일이 필요 없는 경우)."""
+    text, _ = fetch_article(url)
     return text

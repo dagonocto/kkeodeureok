@@ -23,7 +23,7 @@ import analysis_pipeline
 import glossary
 import story_thread
 from feedback import save_feedback_note
-from fetch_article import fetch_article_text
+from fetch_article import fetch_article
 from notion_client import append_axis_block, create_notion_page, list_recent_pages
 from prompts import FOLLOWUP_SCHEMA, FOLLOWUP_SYSTEM_PROMPT
 from text_cleanup import strip_trailing_artifacts
@@ -135,7 +135,7 @@ def render_story_timeline_carousel() -> None:
 
     with st.container(border=True):
         dots = "".join("●" if i == tick % len(thread_names) else "○" for i in range(len(thread_names)))
-        st.markdown(f"**🧵 이어지는 사안 · {current_name}**  <span style='color:gray'>{dots}</span>", unsafe_allow_html=True)
+        st.markdown(f"**🧵 흘러온 이야기 · {current_name}**  <span style='color:gray'>{dots}</span>", unsafe_allow_html=True)
         cols = st.columns(len(articles))
         for col, article in zip(cols, articles):
             with col:
@@ -396,14 +396,16 @@ def perform_analysis():
     """실제 분석 1건을 실행한다. 정상 경로와 "그래도 다시 분석하기" 경로가 함께 쓴다."""
     try:
         if input_mode == "링크 입력":
-            article_text = fetch_article_text(link_url)
+            article_text, published_date = fetch_article(link_url)
             document_block = {"type": "input_text", "text": article_text}
             url_for_notion = link_url
         else:
             document_block = build_document_block(uploaded_file)
             url_for_notion = source_url
+            published_date = None  # 파일 업로드는 발행일을 알 방법이 없어서 저장 시 오늘 날짜로 대체된다.
 
         result, cost = analyze_with_progress(document_block, url_for_notion)
+        result["published_date"] = published_date
     except Exception as e:  # noqa: BLE001 - 화면에 에러를 그대로 보여주기 위해 넓게 잡음
         st.error(f"분석 중 문제가 발생했어요: {e}")
     else:
@@ -524,9 +526,18 @@ with st.expander("🗞 여러 기사 한번에 분석하기"):
                 overall.progress(i / len(urls), text=f"{i}/{len(urls)} 처리 중... ({u})")
                 entry = {"url": u, "result": None, "page_url": None, "error": None}
                 try:
-                    text = fetch_article_text(u)
+                    text, published_date = fetch_article(u)
                     doc_block = {"type": "input_text", "text": text}
                     result, cost = analyze_article(doc_block, u)
+                    result["published_date"] = published_date
+                    thread_name, _ = story_thread.assign_thread(
+                        st.secrets["OPENAI_API_KEY"],
+                        result,
+                        st.secrets["NOTION_TOKEN"],
+                        st.secrets["NOTION_DATA_SOURCE_ID"],
+                    )
+                    if thread_name:
+                        result["thread_name"] = thread_name
                     page_url, _ = create_notion_page(
                         result,
                         notion_token=st.secrets["NOTION_TOKEN"],

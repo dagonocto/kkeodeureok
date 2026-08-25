@@ -153,7 +153,7 @@ def build_properties(data: dict) -> dict:
     """Claude 응답(dict)을 Notion 데이터베이스의 속성(properties) 형식으로 변환."""
     properties = {
         "제목": {"title": [_text(data["title"])]},
-        "날짜": {"date": {"start": date.today().isoformat()}},
+        "날짜": {"date": {"start": data.get("published_date") or date.today().isoformat()}},
         "분야": {"select": {"name": data["category"]}},
         "출처명": {"rich_text": [_text(data["source_name"])]},
         "행정학 키워드": {"multi_select": [{"name": kw} for kw in data["keywords"]]},
