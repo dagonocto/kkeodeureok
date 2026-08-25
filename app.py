@@ -106,14 +106,12 @@ def render_story_timeline_carousel() -> None:
     최근 저장된 기사들을 "연관 시리즈" 이름으로 묶어서, 2개 이상 모인 시리즈만
     후보로 삼는다.
 
-    주의: st_autorefresh(강제 주기적 재실행)는 쓰지 않는다 — Streamlit은 사용자가
-    뭔가를 누르면 스크립트를 처음부터 다시 실행하는데, 분석은 몇 분씩 걸리는 작업이라
-    그 사이에 자동 새로고침이 끼어들면 진행 중이던 분석이 끝나기도 전에 중단되고
-    처음부터 다시 실행돼버린다(실제로 "분석 시작을 눌러도 결과가 안 나오는" 버그로
-    나타났다). 대신 현재 시각을 8초 단위로 나눈 값을 카운터로 써서, 사용자가 다른
-    이유로(버튼 클릭 등) 페이지가 자연스럽게 다시 실행될 때마다 그사이 흐른 시간만큼
-    시리즈가 넘어가 있게 한다 — 강제로 재실행을 일으키지 않으므로 분석 도중에는
-    절대 끼어들지 않는다.
+    주의: 예전에는 st_autorefresh(강제 주기적 재실행)로 자동 전환했는데, Streamlit은
+    새 재실행 요청이 오면 진행 중이던 실행을 중단하고 처음부터 다시 시작하는 구조라서
+    분석(몇 분씩 걸림) 도중에 자동 새로고침이 끼어들어 결과가 안 나오는 버그로
+    이어졌다. 그래서 자동 전환 대신, 사용자가 직접 "<"/">" 버튼을 눌러야만 넘어가는
+    방식으로 바꿨다 — 버튼 클릭은 사용자가 실제로 눌렀을 때만 재실행을 일으키므로
+    (👍/👎 피드백 버튼과 동일한 방식) 분석 도중에 끼어들 수 없다.
     """
     try:
         recent = list_recent_pages(st.secrets["NOTION_TOKEN"], st.secrets["NOTION_DATA_SOURCE_ID"], limit=60)
@@ -128,25 +126,38 @@ def render_story_timeline_carousel() -> None:
     if not threads:
         return
 
-    # 최근에 갱신된 시리즈부터 순서대로 순환하도록 정렬(각 시리즈의 최신 기사 날짜 기준).
+    # 최근에 갱신된 시리즈부터 순서대로 배열(각 시리즈의 최신 기사 날짜 기준).
     thread_names = sorted(
         threads.keys(),
         key=lambda name: max(p["date"] or "" for p in threads[name]),
         reverse=True,
     )
 
-    tick = int(time.time() // 8)
-    current_name = thread_names[tick % len(thread_names)]
+    if "story_timeline_idx" not in st.session_state:
+        st.session_state.story_timeline_idx = 0
+    idx = st.session_state.story_timeline_idx % len(thread_names)
+    current_name = thread_names[idx]
     articles = sorted(threads[current_name], key=lambda p: p["date"] or "")
 
     with st.container(border=True):
-        dots = "".join("●" if i == tick % len(thread_names) else "○" for i in range(len(thread_names)))
-        st.markdown(
-            f"<span style='font-size:1.2rem; font-weight:700;'>🧵 흘러온 이야기</span> "
-            f"<span style='color:gray'>{dots}</span>",
-            unsafe_allow_html=True,
-        )
-        st.markdown(f"<span style='font-size:1.05rem; font-weight:600;'>{current_name}</span>", unsafe_allow_html=True)
+        st.markdown("<span style='font-size:1.2rem; font-weight:700;'>🧵 흘러온 이야기</span>", unsafe_allow_html=True)
+        nav_prev, nav_label, nav_next = st.columns([1, 10, 1])
+        with nav_prev:
+            if st.button("〈", key="story_timeline_prev", disabled=len(thread_names) < 2):
+                st.session_state.story_timeline_idx = (idx - 1) % len(thread_names)
+                st.rerun()
+        with nav_label:
+            dots = "".join("●" if i == idx else "○" for i in range(len(thread_names)))
+            st.markdown(
+                f"<div style='text-align:center;'>"
+                f"<span style='font-size:1.05rem; font-weight:600;'>{current_name}</span> "
+                f"<span style='color:gray'>{dots}</span></div>",
+                unsafe_allow_html=True,
+            )
+        with nav_next:
+            if st.button("〉", key="story_timeline_next", disabled=len(thread_names) < 2):
+                st.session_state.story_timeline_idx = (idx + 1) % len(thread_names)
+                st.rerun()
         for article in articles:
             st.markdown(
                 f"<span style='color:gray; font-size:0.85em'>{article['date'] or ''}</span> · "
