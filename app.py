@@ -17,7 +17,6 @@ import time
 import streamlit as st
 import streamlit.components.v1 as components
 from openai import OpenAI
-from streamlit_autorefresh import st_autorefresh
 
 import analysis_pipeline
 import glossary
@@ -105,9 +104,16 @@ def render_story_timeline_carousel() -> None:
     """이어지는 사안(연관 시리즈)을 첫 화면 상단에 타임라인으로 보여준다.
 
     최근 저장된 기사들을 "연관 시리즈" 이름으로 묶어서, 2개 이상 모인 시리즈만
-    후보로 삼는다. st_autorefresh로 일정 시간마다 화면을 다시 그리게 만들고,
-    그 카운터를 후보 개수로 나눈 나머지로 "지금 보여줄 시리즈"를 고른다 — 광고
-    배너가 시간이 지나면 다른 광고로 바뀌는 것과 같은 방식이다.
+    후보로 삼는다.
+
+    주의: st_autorefresh(강제 주기적 재실행)는 쓰지 않는다 — Streamlit은 사용자가
+    뭔가를 누르면 스크립트를 처음부터 다시 실행하는데, 분석은 몇 분씩 걸리는 작업이라
+    그 사이에 자동 새로고침이 끼어들면 진행 중이던 분석이 끝나기도 전에 중단되고
+    처음부터 다시 실행돼버린다(실제로 "분석 시작을 눌러도 결과가 안 나오는" 버그로
+    나타났다). 대신 현재 시각을 8초 단위로 나눈 값을 카운터로 써서, 사용자가 다른
+    이유로(버튼 클릭 등) 페이지가 자연스럽게 다시 실행될 때마다 그사이 흐른 시간만큼
+    시리즈가 넘어가 있게 한다 — 강제로 재실행을 일으키지 않으므로 분석 도중에는
+    절대 끼어들지 않는다.
     """
     try:
         recent = list_recent_pages(st.secrets["NOTION_TOKEN"], st.secrets["NOTION_DATA_SOURCE_ID"], limit=60)
@@ -129,7 +135,7 @@ def render_story_timeline_carousel() -> None:
         reverse=True,
     )
 
-    tick = st_autorefresh(interval=8000, key="story_timeline_tick")
+    tick = int(time.time() // 8)
     current_name = thread_names[tick % len(thread_names)]
     articles = sorted(threads[current_name], key=lambda p: p["date"] or "")
 

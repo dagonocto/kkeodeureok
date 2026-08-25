@@ -1,5 +1,4 @@
 streamlit
-streamlit-autorefresh
 openai
 requests
 trafilatura
