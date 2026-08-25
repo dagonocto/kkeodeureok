@@ -100,6 +100,15 @@ if "dup_warning_url" not in st.session_state:
     st.session_state.dup_page_url = None
 
 
+@st.cache_data(ttl=30)
+def _cached_recent_pages(limit: int) -> list[dict]:
+    """list_recent_pages를 30초 동안 캐시해서, 〈/〉 탐색처럼 화면 안의 아무 버튼이나
+    눌러도 매번 Notion에 새로 조회하지 않게 한다 — 캐시가 없으면 클릭할 때마다
+    네트워크 왕복이 생겨서 버튼 반응이 느려진다.
+    """
+    return list_recent_pages(st.secrets["NOTION_TOKEN"], st.secrets["NOTION_DATA_SOURCE_ID"], limit=limit)
+
+
 def render_story_timeline_carousel() -> None:
     """이어지는 사안(연관 시리즈)을 첫 화면 상단에 타임라인으로 보여준다.
 
@@ -114,7 +123,7 @@ def render_story_timeline_carousel() -> None:
     (👍/👎 피드백 버튼과 동일한 방식) 분석 도중에 끼어들 수 없다.
     """
     try:
-        recent = list_recent_pages(st.secrets["NOTION_TOKEN"], st.secrets["NOTION_DATA_SOURCE_ID"], limit=60)
+        recent = _cached_recent_pages(60)
     except Exception:  # noqa: BLE001 - 타임라인을 못 불러와도 나머지 화면은 정상 동작해야 한다
         return
 
