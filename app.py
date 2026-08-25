@@ -136,10 +136,11 @@ def render_story_timeline_carousel() -> None:
     with st.container(border=True):
         dots = "".join("●" if i == tick % len(thread_names) else "○" for i in range(len(thread_names)))
         st.markdown(
-            f"<span style='font-size:1.2rem; font-weight:700;'>🧵 흘러온 이야기 · {current_name}</span> "
+            f"<span style='font-size:1.2rem; font-weight:700;'>🧵 흘러온 이야기</span> "
             f"<span style='color:gray'>{dots}</span>",
             unsafe_allow_html=True,
         )
+        st.markdown(f"<span style='font-size:1.05rem; font-weight:600;'>{current_name}</span>", unsafe_allow_html=True)
         for article in articles:
             st.markdown(
                 f"<span style='color:gray; font-size:0.85em'>{article['date'] or ''}</span> · "
