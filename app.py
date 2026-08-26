@@ -359,13 +359,22 @@ FAMILY_ICONS = {
 }
 
 
+def _md_safe(text: str) -> str:
+    """물결표(~)는 마크다운에서 취소선 문법(~text~)으로 해석될 수 있어서, "90~110조원"
+    같은 숫자 범위 표기가 화면에서 줄 그어진 것처럼 보이는 문제가 있었다(Notion 저장본은
+    구조화된 텍스트라 이 문제가 없음 — 오직 st.write/st.markdown 렌더링에서만 발생).
+    화면에 표시하기 직전에 이스케이프해서 있는 그대로 보이게 한다.
+    """
+    return text.replace("~", "\\~")
+
+
 def render_result(data: dict, key_prefix: str = "") -> None:
     """분석 결과(dict)를 Notion에 쓰는 것과 똑같은 구조로 화면에 보여준다.
 
     key_prefix: 이 함수를 한 화면에 여러 번 부를 때(예: 여러 기사 한번에 보여주기)
     버튼 key가 서로 겹치지 않게 구분해주는 접두사.
     """
-    st.markdown(f"#### {data['title']}")
+    st.markdown(f"#### {_md_safe(data['title'])}")
     meta = f"{data['category']} · {data['source_name']}"
     if data["source_url"]:
         meta += f" · [원문 보기]({data['source_url']})"
@@ -373,7 +382,7 @@ def render_result(data: dict, key_prefix: str = "") -> None:
 
     st.markdown("**📌 요약**")
     for point in data["summary"]:
-        st.markdown(f"- {point}")
+        st.markdown(f"- {_md_safe(point)}")
 
     if data["axes"]:
         st.markdown("**🔥 꺼드럭 포인트**")
@@ -386,17 +395,17 @@ def render_result(data: dict, key_prefix: str = "") -> None:
                 with st.container(border=True, key=f"{key_prefix}kd-axis-card-{i}"):
                     icon = FAMILY_ICONS.get(axis["family"], "💡")
                     label = f"⚠️ {axis['title']}" if axis["sensitive"] else axis["title"]
-                    st.markdown(f"**{icon} {label}**")
-                    st.write(axis["explanation"])
+                    st.markdown(f"**{icon} {_md_safe(label)}**")
+                    st.write(_md_safe(axis["explanation"]))
                     talk_line = axis.get("talk_line")
                     if talk_line:
-                        st.markdown(f"> 💬 {talk_line}")
+                        st.markdown(f"> 💬 {_md_safe(talk_line)}")
                     if axis["confidence"] == "low":
                         st.caption("확실하지 않음 — 확인 필요")
                     # 추가 질문으로 붙은 축만 개별 출처(references)를 가진다 — 기존 축은
                     # 기사 전체 "더 파보고 싶으면" 목록으로 출처를 갈음하기 때문에 없을 수 있다.
                     for ref in axis.get("references", []):
-                        title = f"[{ref['title']}]({ref['url']})" if ref["url"] else ref["title"]
+                        title = f"[{_md_safe(ref['title'])}]({ref['url']})" if ref["url"] else _md_safe(ref["title"])
                         st.caption(f"출처: {ref['source']} · {title}")
                     # 축 하나하나에 피드백을 남길 수 있게 한다 — 기사 전체가 아니라
                     # "이 축이 좋았는지/별로였는지"를 짚어줘야 다음 지침에 더 정확히 반영된다.
@@ -422,7 +431,7 @@ def render_result(data: dict, key_prefix: str = "") -> None:
     if not data["references"]:
         st.caption("없음")
     for ref in data["references"]:
-        title = f"[{ref['title']}]({ref['url']})" if ref["url"] else ref["title"]
+        title = f"[{_md_safe(ref['title'])}]({ref['url']})" if ref["url"] else _md_safe(ref["title"])
         st.markdown(f"- {ref['source']} · {title}")
 
 
