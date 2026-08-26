@@ -608,6 +608,12 @@ def perform_analysis():
         result["published_date"] = published_date
     except Exception as e:  # noqa: BLE001 - 화면에 에러를 그대로 보여주기 위해 넓게 잡음
         st.error(f"분석 중 문제가 발생했어요: {e}")
+        # 실패했는데 이전 결과가 그대로 남아있으면, 방금 실패한 기사에 대한 결과처럼
+        # 착각하기 쉽다 — 실패 시엔 화면에서 이전 결과를 치워서 헷갈리지 않게 한다.
+        # (이전 결과는 이미 Notion에 저장됐던 것이라 여기서 지워도 없어지지 않는다.)
+        st.session_state.result = None
+        st.session_state.page_url = None
+        st.session_state.page_id = None
     else:
         # 기억 상자에 저장 — 이후 재실행(피드백 저장 버튼 등)돼도 안 사라짐.
         # document_block/url_for_notion도 같이 저장해두는 이유: "추가 질문" 기능에서
