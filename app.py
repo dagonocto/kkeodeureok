@@ -333,7 +333,7 @@ def build_document_block(file) -> dict:
     return {"type": "input_text", "text": raw_bytes.decode("utf-8")}
 
 
-def analyze_article(document_block: dict, url: str) -> tuple[dict, float]:
+def analyze_article(document_block: dict, url: str, on_stage: callable = None) -> tuple[dict, float]:
     """기사 분석 파이프라인(기획→조사→작성)을 실행한다. 실제 로직은 analysis_pipeline.py에 있다 —
     app.py(Streamlit)와 regression_test.py 양쪽에서 로직이 갈라지지 않도록 하기 위해서다."""
     return analysis_pipeline.analyze_article(
@@ -343,6 +343,7 @@ def analyze_article(document_block: dict, url: str) -> tuple[dict, float]:
         st.secrets["PERPLEXITY_API_KEY"],
         st.secrets.get("NOTION_TOKEN"),
         st.secrets.get("GLOSSARY_DATA_SOURCE_ID"),
+        on_stage=on_stage,
     )
 
 
@@ -504,22 +505,27 @@ def find_duplicate_page_url(target_url: str) -> str | None:
 def analyze_with_progress(document_block: dict, url: str):
     """analyze_article을 실행하는 동안 진행률 표시줄을 보여준다.
 
-    실제 진행률은 알 수 없다(API 호출 한 번이 끝나야 결과가 통째로 오기 때문에
-    중간 단계를 들여다볼 수 없음). 그래서 analyze_article을 별도 스레드에서 돌리고,
-    메인 스레드는 그 사이에 표시줄을 적당한 속도로 채워서 "기다리고 있다"는 걸
-    체감상 더 빠르고 확실하게 보여준다 — 95%까지 채우고, 끝나면 100%로 마무리.
+    API 호출 하나(기획/조사/작성)의 내부 진행률까지는 알 수 없지만, 그 세 단계의 경계는
+    analyze_article의 on_stage 콜백으로 실제로 관측할 수 있다. 그래서 단계별 상한선(구간)을
+    real stage 완료 여부로 잠가두고, 그 구간 안에서만 타이머로 부드럽게 채운다 — 조사
+    단계가 예전보다 오래 걸려도(축마다 순차 검색) 막대가 미리 앞서가서 한참 멈춰 있는
+    것처럼 보이는 일이 없다. 조사 단계에 구간을 가장 넓게 배정한 것도 실제로 가장 오래
+    걸리는 단계라서다.
     """
-    progress = st.progress(0, text="기사를 읽는 중...")
-    stages = [(15, "기사를 읽는 중..."), (45, "배경을 검색하는 중..."), (80, "설명을 작성하는 중...")]
+    # (라벨, 그 단계가 끝나면 도달하는 상한 %) — 조사가 가장 오래 걸리는 단계라 구간을 넓게 뒀다.
+    STAGE_CEILINGS = {None: (0, "기사를 읽는 중..."), "plan": (20, "배경을 검색하는 중..."),
+                      "research": (85, "설명을 작성하는 중..."), "write": (100, "완료!")}
+    state = {"stage": None}
+    progress = st.progress(0, text=STAGE_CEILINGS[None][1])
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        future = executor.submit(analyze_article, document_block, url)
-        pct, stage_idx = 0, 0
+        future = executor.submit(analyze_article, document_block, url, on_stage=lambda s: state.__setitem__("stage", s))
+        pct = 0
         while not future.done():
-            pct = min(pct + 2, 95)
-            if stage_idx < len(stages) - 1 and pct >= stages[stage_idx][0]:
-                stage_idx += 1
-            progress.progress(pct, text=stages[stage_idx][1])
-            time.sleep(0.25)
+            ceiling, label = STAGE_CEILINGS[state["stage"]]
+            # 다음 단계로 넘어가기 직전까지만 채우고(ceiling - 3), 실제 콜백이 와야 그 벽을 넘는다.
+            pct = min(pct + 1, max(ceiling - 3, pct))
+            progress.progress(pct, text=label)
+            time.sleep(0.3)
         progress.progress(100, text="완료!")
         result = future.result()  # analyze_article 안에서 에러가 났으면 여기서 다시 던져진다
     progress.empty()

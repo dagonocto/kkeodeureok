@@ -178,18 +178,30 @@ def analyze_article(
     perplexity_api_key: str,
     notion_token: str | None = None,
     glossary_data_source_id: str | None = None,
+    on_stage: callable = None,
 ) -> tuple[dict, float]:
     """기사 하나를 분석한다. (기획 → 조사 → 작성), 결과와 총 비용을 돌려준다.
 
     notion_token/glossary_data_source_id는 선택值이다 — 주면 "용어 뽀개기" 축에 용어사전
     캐시를 쓰고, 안 주면(예: 아직 사전을 안 만들었거나 회귀 테스트) 매번 검색하는 예전
     방식 그대로 동작한다.
+
+    on_stage: 단계가 끝날 때마다 "plan"/"research"/"write"를 인자로 호출되는 콜백(선택).
+    app.py가 이걸로 진행률 표시줄을 "이 단계는 실제로 끝났다"는 진짜 체크포인트에 맞춰
+    보여준다 — API 호출 하나의 내부 진행률까지는 알 수 없지만, 세 단계 경계는 실제로
+    관측 가능하다.
     """
     client = OpenAI(api_key=openai_api_key)
 
     plan, plan_cost = _plan(client, document_block, url)
+    if on_stage:
+        on_stage("plan")
     findings, fresh_terms, research_cost = _research(plan, perplexity_api_key, notion_token, glossary_data_source_id)
+    if on_stage:
+        on_stage("research")
     written, write_cost = _write(client, document_block, plan, findings)
+    if on_stage:
+        on_stage("write")
 
     if fresh_terms and notion_token and glossary_data_source_id:
         _save_new_glossary_terms(written["axes"], fresh_terms, notion_token, glossary_data_source_id)
