@@ -529,6 +529,7 @@ WRITER_SCHEMA = {
     "properties": {
         "axes": {
             "type": "array",
+            "maxItems": 4,
             "items": {
                 "type": "object",
                 "additionalProperties": False,
