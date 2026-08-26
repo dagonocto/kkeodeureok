@@ -165,6 +165,9 @@ def _write(client: OpenAI, document_block: dict, plan: dict, findings: list[dict
         raise RuntimeError(f"작성 단계가 끝까지 완료되지 않았어요 (status={response.status})")
     cost = log_usage(response.usage.input_tokens, response.usage.output_tokens, 0)
     written = strip_trailing_artifacts(json.loads(response.output_text))
+    # 지침상 "뺄 축은 결과 배열에 아예 포함하지 않는다"고 되어 있지만, 모델이 이걸 안 지키고
+    # explanation을 빈 문자열로만 남겨두는 경우가 있어서 여기서도 한 번 더 걸러낸다.
+    written["axes"] = [axis for axis in written["axes"] if axis["explanation"].strip()]
     return written, cost
 
 
