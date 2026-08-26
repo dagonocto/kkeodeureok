@@ -512,21 +512,36 @@ def analyze_with_progress(document_block: dict, url: str):
     것처럼 보이는 일이 없다. 조사 단계에 구간을 가장 넓게 배정한 것도 실제로 가장 오래
     걸리는 단계라서다.
     """
-    # (라벨, 그 단계가 끝나면 도달하는 상한 %) — 조사가 가장 오래 걸리는 단계라 구간을 넓게 뒀다.
-    STAGE_CEILINGS = {None: (0, "기사를 읽는 중..."), "plan": (20, "배경을 검색하는 중..."),
-                      "research": (85, "설명을 작성하는 중..."), "write": (100, "완료!")}
-    # 로딩 중 심심하지 않게, 몇 초마다 바뀌는 회색 문구 — 실제 진행 상황과는 무관하게
-    # 그냥 "지금도 일하고 있다"는 인상을 준다.
-    WRITING_MESSAGES = [
-        "자료를 토대로 작성 중이에요...",
-        "부족한 건 없는지 다시 한번 돌아보는 중...",
-        "말투를 다듬는 중...",
-        "놓친 배경은 없는지 살펴보는 중...",
-    ]
+    # 그 단계가 끝나면 도달하는 상한 % — 조사가 가장 오래 걸리는 단계라 구간을 넓게 뒀다.
+    STAGE_CEILINGS = {None: 0, "plan": 20, "research": 85, "write": 100}
+    # 아래 회색 캡션에 쓸 문구 — 지금 실제로 어떤 단계가 진행 중인지에 맞춰서 고른다.
+    # (state["stage"]는 "방금 끝난 단계"라서, 그 키는 곧 "지금 하고 있는 다음 단계"를 가리킨다.)
+    STAGE_MESSAGES = {
+        None: [
+            "어떤 게 궁금할지 고민하는 중...",
+            "어떤 배경이 필요할지 정리하는 중...",
+            "기사를 꼼꼼히 읽는 중...",
+        ],
+        "plan": [
+            "어떤 질문을 던질지 정하는 중...",
+            "필요한 자료를 찾아보는 중...",
+            "여기저기 뒤져서 근거를 모으는 중...",
+        ],
+        "research": [
+            "자료를 토대로 글을 쓰는 중...",
+            "부족한 건 없는지 다시 한번 돌아보는 중...",
+            "말투를 다듬는 중...",
+            "배경을 한 번 더 살펴보는 중...",
+            "빠뜨린 게 없는지 검토하는 중...",
+        ],
+        "write": [
+            "마무리하는 중...",
+        ],
+    }
     TICKS_PER_MESSAGE = 8  # 0.3초 * 8 = 약 2.4초마다 문구 전환
 
     state = {"stage": None}
-    progress = st.progress(0, text=STAGE_CEILINGS[None][1])
+    progress = st.progress(0)
     # 점 3개가 통통 튀는 애니메이션 — 루프 안에서 다시 그리면 매번 처음부터 재생돼서
     # 뚝뚝 끊겨 보이므로, 딱 한 번만 그려서 브라우저가 알아서 계속 돌리게 둔다.
     dots = st.empty()
@@ -556,18 +571,20 @@ def analyze_with_progress(document_block: dict, url: str):
         future = executor.submit(analyze_article, document_block, url, on_stage=lambda s: state.__setitem__("stage", s))
         pct, tick = 0, 0
         while not future.done():
-            ceiling, label = STAGE_CEILINGS[state["stage"]]
+            stage = state["stage"]
+            ceiling = STAGE_CEILINGS[stage]
             # 다음 단계로 넘어가기 직전까지만 채우고(ceiling - 3), 실제 콜백이 와야 그 벽을 넘는다.
             pct = min(pct + 1, max(ceiling - 3, pct))
-            progress.progress(pct, text=label)
-            msg = WRITING_MESSAGES[(tick // TICKS_PER_MESSAGE) % len(WRITING_MESSAGES)]
+            progress.progress(pct)
+            messages = STAGE_MESSAGES[stage]
+            msg = messages[(tick // TICKS_PER_MESSAGE) % len(messages)]
             caption.markdown(
                 f"<p style='color:#999;text-align:center;font-size:0.85rem;margin-top:2px;'>{msg}</p>",
                 unsafe_allow_html=True,
             )
             tick += 1
             time.sleep(0.3)
-        progress.progress(100, text="완료!")
+        progress.progress(100)
         result = future.result()  # analyze_article 안에서 에러가 났으면 여기서 다시 던져진다
     progress.empty()
     dots.empty()
