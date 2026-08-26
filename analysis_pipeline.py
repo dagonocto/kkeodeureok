@@ -101,7 +101,10 @@ def _research(
 
     total_cost = 0.0
     if to_search:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(to_search)) as executor:
+        # 축마다 동시에 쏘면(max_workers=len(to_search)) 순간적으로 Perplexity 초당 요청
+        # 제한(429)에 걸려 "검색 실패"로 대체되는 경우가 잦았다 — 동시 실행 수만 2로 낮춰서
+        # 질문 개수·근거 자료 양은 그대로 두고 순간 요청 부하만 줄인다.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(2, len(to_search))) as executor:
             searched = list(executor.map(lambda i: _research_one(axes[i], perplexity_api_key), to_search))
         for i, (result, cost) in zip(to_search, searched):
             findings[i] = result
