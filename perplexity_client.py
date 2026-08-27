@@ -22,6 +22,15 @@ PERPLEXITY_API_URL = "https://api.perplexity.ai/v1/responses"
 MAX_RETRIES = 2
 RETRY_BACKOFF_SECONDS = 3
 
+# 이 질문(research_query)은 단순 질의응답이 아니라 "여러 단계에 걸쳐 찾아서 답해줘"라는
+# 다단계 브라우징 요청이다(최대 15단계, 위 preset 설명 참고). 실측 결과 "대한민국 수도가
+# 어디야" 같은 단순 질문은 4초면 끝나지만, 실제로 이 앱이 만드는 구체적인 조사성 질문은
+# 60초를 넘기는 경우가 잦았다 — 네트워크 지연이 아니라 그만큼 단계를 많이 밟기 때문이다.
+# 그런데 기존에는 60초 만에 포기하고, 같은 60초 제한으로 두 번을 더 재시도했다 — 애초에
+# 시간이 부족해서 못 끝난 걸 똑같은 시간으로 다시 시도해봤자 마찬가지로 못 끝나기 쉽다.
+# 그래서 재시도 횟수를 늘리는 대신 한 번의 시도에 더 넉넉한 시간을 준다.
+REQUEST_TIMEOUT_SECONDS = 120
+
 # medium과 high는 둘 다 최대 15단계 다단계 브라우징을 하지만, high는 더 비싼 모델(GPT-5.6-Sol)을
 # 써서 복잡한 질문에서 비용이 예측 불가능하게 튄다 — 실측 결과 같은 질문에 high는 $0.25,
 # medium은 $0.01174로 22배 차이가 났는데 인용 품질(실제 출처 URL 개수·정확도)은 거의 같았다.
@@ -55,7 +64,9 @@ def search(query: str, api_key: str, preset: str = DEFAULT_PRESET) -> dict:
 
     for attempt in range(MAX_RETRIES + 1):
         try:
-            response = requests.post(PERPLEXITY_API_URL, headers=headers, json=body, timeout=60)
+            response = requests.post(
+                PERPLEXITY_API_URL, headers=headers, json=body, timeout=REQUEST_TIMEOUT_SECONDS
+            )
             if response.status_code == 429 and attempt < MAX_RETRIES:
                 time.sleep(RETRY_BACKOFF_SECONDS * (attempt + 1))
                 continue
