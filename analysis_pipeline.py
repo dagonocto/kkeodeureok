@@ -101,10 +101,12 @@ def _research(
 
     total_cost = 0.0
     if to_search:
-        # 축마다 동시에 쏘면(max_workers=len(to_search)) 순간적으로 Perplexity 초당 요청
-        # 제한(429)에 걸려 "검색 실패"로 대체되는 경우가 잦았다 — 동시 실행 수만 2로 낮춰서
-        # 질문 개수·근거 자료 양은 그대로 두고 순간 요청 부하만 줄인다.
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(2, len(to_search))) as executor:
+        # (실험 중 — 되돌릴 수 있음) 예전엔 동시 실행 수를 2로 낮춰서 429를 줄였는데,
+        # 그 대가로 축이 3~4개면 검색이 두 번(순차)으로 나뉘어 전체 시간이 거의 2배로 늘어난다.
+        # 지금은 429가 나면 perplexity_client.search 안에서 자동으로 재시도(대기 후 재요청)
+        # 하므로, 순간적으로 429가 나더라도 완전히 실패하지는 않는다 — 그래서 축 개수(최대
+        # 4개)만큼 동시에 쏴서 전체 시간을 줄여본다. 실측해서 429가 잦아지면 다시 낮춘다.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(to_search))) as executor:
             searched = list(executor.map(lambda i: _research_one(axes[i], perplexity_api_key), to_search))
         for i, (result, cost) in zip(to_search, searched):
             findings[i] = result
