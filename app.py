@@ -522,7 +522,9 @@ def analyze_with_progress(document_block: dict, url: str):
     걸리는 단계라서다.
     """
     # 그 단계가 끝나면 도달하는 상한 % — 조사가 가장 오래 걸리는 단계라 구간을 넓게 뒀다.
-    STAGE_CEILINGS = {None: 0, "plan": 20, "research": 85, "write": 100}
+    # write 다음에 "카드끼리 겹치는 내용 검토"(review) 단계가 하나 더 생겨서, write을
+    # 100%로 잡지 않고 review에 마지막 구간을 남겨뒀다.
+    STAGE_CEILINGS = {None: 0, "plan": 15, "research": 75, "write": 92, "review": 100}
     # 아래 회색 캡션에 쓸 문구 — 지금 실제로 어떤 단계가 진행 중인지에 맞춰서 고른다.
     # (state["stage"]는 "방금 끝난 단계"라서, 그 키는 곧 "지금 하고 있는 다음 단계"를 가리킨다.)
     STAGE_MESSAGES = {
@@ -544,6 +546,9 @@ def analyze_with_progress(document_block: dict, url: str):
             "빠뜨린 게 없는지 검토하는 중...",
         ],
         "write": [
+            "카드끼리 겹치는 내용은 없는지 확인하는 중...",
+        ],
+        "review": [
             "마무리하는 중...",
         ],
     }

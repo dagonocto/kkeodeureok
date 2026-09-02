@@ -20,7 +20,14 @@ from openai import OpenAI
 import glossary
 import perplexity_client
 from feedback import load_feedback_notes
-from prompts import PLANNING_SCHEMA, PLANNING_SYSTEM_PROMPT, WRITER_SCHEMA, WRITER_SYSTEM_PROMPT
+from prompts import (
+    PLANNING_SCHEMA,
+    PLANNING_SYSTEM_PROMPT,
+    REVIEW_SCHEMA,
+    REVIEW_SYSTEM_PROMPT,
+    WRITER_SCHEMA,
+    WRITER_SYSTEM_PROMPT,
+)
 from text_cleanup import strip_trailing_artifacts
 from usage_log import log_perplexity_usage, log_usage
 
@@ -167,10 +174,48 @@ def _write(client: OpenAI, document_block: dict, plan: dict, findings: list[dict
         raise RuntimeError(f"작성 단계가 끝까지 완료되지 않았어요 (status={response.status})")
     cost = log_usage(response.usage.input_tokens, response.usage.output_tokens, 0)
     written = strip_trailing_artifacts(json.loads(response.output_text))
+    # 스키마는 문단마다 body를 먼저 쓰고 heading을 나중에 쓰게 강제한다(JSON 필드 순서대로
+    # 채워지므로) — heading을 먼저 정해두고 거기 맞춰 body를 쓰다가 내용이 미묘하게 어긋나는
+    # 문제를 줄이기 위해서다. 여기서 그 paragraphs를 하나의 explanation 문자열로 합친다 —
+    # 이후 파이프라인(검토 단계, Notion 저장, 화면 표시)은 전부 explanation 문자열 하나만 안다.
+    for axis in written["axes"]:
+        axis["explanation"] = "\n\n".join(
+            f"**{p['heading']}**\n{p['body']}" for p in axis.pop("paragraphs")
+        )
     # 지침상 "뺄 축은 결과 배열에 아예 포함하지 않는다"고 되어 있지만, 모델이 이걸 안 지키고
     # explanation을 빈 문자열로만 남겨두는 경우가 있어서 여기서도 한 번 더 걸러낸다.
     written["axes"] = [axis for axis in written["axes"] if axis["explanation"].strip()]
     return written, cost
+
+
+def _review(client: OpenAI, axes: list[dict]) -> tuple[list[dict], float]:
+    """4단계(검토): 이미 작성된 카드끼리 겹치는 내용이 있으면 정리한다.
+
+    작성 단계 지침 안에 "겹치면 정리해라"는 일반 규칙을 계속 넣어왔는데도 매번 새로운
+    형태로 카드 중복이 반복됐다 — 이 검토만 전담으로 하는 별도 단계가 훨씬 안정적으로
+    지켜질 거라는 판단으로 추가했다. 검색이 필요 없는 순수 텍스트 재검토라 비용·시간
+    부담이 작다. 카드가 1개뿐이면 겹칠 상대가 없으므로 호출 자체를 건너뛴다.
+    """
+    if len(axes) < 2:
+        return axes, 0.0
+
+    axes_text = json.dumps(axes, ensure_ascii=False, indent=2)
+    response = client.responses.create(
+        model=MODEL,
+        max_output_tokens=16000,
+        input=[
+            {"role": "system", "content": REVIEW_SYSTEM_PROMPT},
+            {"role": "user", "content": f"아래 카드들을 검토해줘.\n\n{axes_text}"},
+        ],
+        text={"format": {"type": "json_schema", "name": "axes_review", "strict": True, "schema": REVIEW_SCHEMA}},
+    )
+    if response.status != "completed":
+        # 검토 단계가 실패해도 이미 작성된 카드는 멀쩡하다 — 검토를 건너뛰고 원본을 그대로 쓴다.
+        return axes, 0.0
+    cost = log_usage(response.usage.input_tokens, response.usage.output_tokens, 0)
+    reviewed = json.loads(response.output_text)["axes"]
+    reviewed = [axis for axis in reviewed if axis["explanation"].strip()]
+    return reviewed, cost
 
 
 def analyze_article(
@@ -182,16 +227,16 @@ def analyze_article(
     glossary_data_source_id: str | None = None,
     on_stage: callable = None,
 ) -> tuple[dict, float]:
-    """기사 하나를 분석한다. (기획 → 조사 → 작성), 결과와 총 비용을 돌려준다.
+    """기사 하나를 분석한다. (기획 → 조사 → 작성 → 검토), 결과와 총 비용을 돌려준다.
 
     notion_token/glossary_data_source_id는 선택值이다 — 주면 "용어 뽀개기" 축에 용어사전
     캐시를 쓰고, 안 주면(예: 아직 사전을 안 만들었거나 회귀 테스트) 매번 검색하는 예전
     방식 그대로 동작한다.
 
-    on_stage: 단계가 끝날 때마다 "plan"/"research"/"write"를 인자로 호출되는 콜백(선택).
-    app.py가 이걸로 진행률 표시줄을 "이 단계는 실제로 끝났다"는 진짜 체크포인트에 맞춰
-    보여준다 — API 호출 하나의 내부 진행률까지는 알 수 없지만, 세 단계 경계는 실제로
-    관측 가능하다.
+    on_stage: 단계가 끝날 때마다 "plan"/"research"/"write"/"review"를 인자로 호출되는
+    콜백(선택). app.py가 이걸로 진행률 표시줄을 "이 단계는 실제로 끝났다"는 진짜
+    체크포인트에 맞춰 보여준다 — API 호출 하나의 내부 진행률까지는 알 수 없지만, 네
+    단계 경계는 실제로 관측 가능하다.
     """
     client = OpenAI(api_key=openai_api_key)
 
@@ -204,13 +249,16 @@ def analyze_article(
     written, write_cost = _write(client, document_block, plan, findings)
     if on_stage:
         on_stage("write")
+    reviewed_axes, review_cost = _review(client, written["axes"])
+    if on_stage:
+        on_stage("review")
 
     if fresh_terms and notion_token and glossary_data_source_id:
-        _save_new_glossary_terms(written["axes"], fresh_terms, notion_token, glossary_data_source_id)
+        _save_new_glossary_terms(reviewed_axes, fresh_terms, notion_token, glossary_data_source_id)
 
-    # plan에도 "axes"가 있지만 research_query만 있는 기획 단계 버전이라, written의 완성된
-    # axes로 덮어쓴다.
-    data = {**plan, "axes": written["axes"], "references": written["references"]}
+    # plan에도 "axes"가 있지만 research_query만 있는 기획 단계 버전이라, 검토까지 끝난
+    # 완성된 axes로 덮어쓴다.
+    data = {**plan, "axes": reviewed_axes, "references": written["references"]}
 
     # 모델이 언론사명을 못 찾으면 "확인 불가"를 돌려주는데, 그러면 Notion 페이지에
     # 출처가 아예 안 보인다. URL의 도메인이라도 있으면 그걸로 대신 채운다.
@@ -219,5 +267,5 @@ def analyze_article(
         if domain:
             data["source_name"] = domain
 
-    total_cost_usd = plan_cost + research_cost + write_cost
+    total_cost_usd = plan_cost + research_cost + write_cost + review_cost
     return data, total_cost_usd
