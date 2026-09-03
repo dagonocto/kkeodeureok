@@ -56,7 +56,7 @@ def _plan(client: OpenAI, document_block: dict, url: str) -> tuple[dict, float]:
     )
     if response.status != "completed":
         raise RuntimeError(f"기획 단계가 끝까지 완료되지 않았어요 (status={response.status})")
-    cost = log_usage(response.usage.input_tokens, response.usage.output_tokens, 0)
+    cost = log_usage(response.usage.input_tokens, response.usage.output_tokens, 0, stage="plan")
     return json.loads(response.output_text), cost
 
 
@@ -172,7 +172,7 @@ def _write(client: OpenAI, document_block: dict, plan: dict, findings: list[dict
     )
     if response.status != "completed":
         raise RuntimeError(f"작성 단계가 끝까지 완료되지 않았어요 (status={response.status})")
-    cost = log_usage(response.usage.input_tokens, response.usage.output_tokens, 0)
+    cost = log_usage(response.usage.input_tokens, response.usage.output_tokens, 0, stage="write")
     written = strip_trailing_artifacts(json.loads(response.output_text))
     # 스키마는 문단마다 body를 먼저 쓰고 heading을 나중에 쓰게 강제한다(JSON 필드 순서대로
     # 채워지므로) — heading을 먼저 정해두고 거기 맞춰 body를 쓰다가 내용이 미묘하게 어긋나는
@@ -212,7 +212,7 @@ def _review(client: OpenAI, axes: list[dict]) -> tuple[list[dict], float]:
     if response.status != "completed":
         # 검토 단계가 실패해도 이미 작성된 카드는 멀쩡하다 — 검토를 건너뛰고 원본을 그대로 쓴다.
         return axes, 0.0
-    cost = log_usage(response.usage.input_tokens, response.usage.output_tokens, 0)
+    cost = log_usage(response.usage.input_tokens, response.usage.output_tokens, 0, stage="review")
     reviewed = json.loads(response.output_text)["axes"]
     reviewed = [axis for axis in reviewed if axis["explanation"].strip()]
     return reviewed, cost

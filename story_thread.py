@@ -92,7 +92,7 @@ def assign_thread(
     )
     if response.status != "completed":
         return None, 0.0
-    cost = log_usage(response.usage.input_tokens, response.usage.output_tokens, 0)
+    cost = log_usage(response.usage.input_tokens, response.usage.output_tokens, 0, stage="story_thread")
     result = json.loads(response.output_text)
 
     if not result["matched"] or not result["thread_name"]:

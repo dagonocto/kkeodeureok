@@ -26,7 +26,7 @@ from fetch_article import fetch_article
 from notion_client import append_axis_block, create_notion_page, list_recent_pages
 from prompts import FOLLOWUP_SCHEMA, FOLLOWUP_SYSTEM_PROMPT
 from text_cleanup import strip_trailing_artifacts
-from usage_log import log_usage, total_cost
+from usage_log import log_usage
 
 MODEL = "gpt-5.4-mini"
 
@@ -492,7 +492,7 @@ def answer_followup(document_block: dict, url: str, question: str) -> tuple[dict
         raise RuntimeError(f"모델 응답이 끝까지 완료되지 않았어요 (status={response.status})")
 
     search_calls = sum(1 for item in response.output if item.type == "web_search_call")
-    cost = log_usage(response.usage.input_tokens, response.usage.output_tokens, search_calls)
+    cost = log_usage(response.usage.input_tokens, response.usage.output_tokens, search_calls, stage="followup")
     return strip_trailing_artifacts(json.loads(response.output_text)), cost
 
 
@@ -682,7 +682,10 @@ if st.session_state.result:
             st.warning("분석은 끝났지만 아직 Notion에 저장되지 않았어요.")
             if st.button("Notion에 다시 저장"):
                 save_to_notion(st.session_state.result)
-        st.caption(f"이번 호출 비용: 약 ${st.session_state.last_cost:.4f} · 누적: 약 ${total_cost():.4f}")
+        # 비용은 더 이상 화면에 보여주지 않는다 — usage_log.csv/perplexity_usage_log.csv에
+        # 계속 기록은 되고 있으니(session_state.last_cost 누적도 그대로 유지) 필요하면 그
+        # 로그로 확인한다. last_cost 자체는 지우지 않았다 — 다른 곳(예: 추가 질문 비용 누적)
+        # 에서 여전히 내부적으로 쓰인다.
         st.divider()
         render_result(st.session_state.result)
 

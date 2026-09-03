@@ -23,8 +23,14 @@ OUTPUT_PRICE_PER_1M = 4.50
 WEB_SEARCH_PRICE_PER_CALL = 0.01
 
 
-def log_usage(input_tokens: int, output_tokens: int, search_calls: int = 0) -> float:
-    """이번 호출의 토큰 수 + 검색 횟수를 파일에 한 줄 추가하고, 예상 비용(달러)을 돌려준다."""
+def log_usage(input_tokens: int, output_tokens: int, search_calls: int = 0, stage: str = "") -> float:
+    """이번 호출의 토큰 수 + 검색 횟수를 파일에 한 줄 추가하고, 예상 비용(달러)을 돌려준다.
+
+    stage: 이 호출이 파이프라인의 어느 단계에서 나왔는지("plan"/"write"/"review"/"followup"/
+    "story_thread" 등). 진행률 표시줄을 "지금까지 이 단계는 보통 이 정도 토큰이 나왔다"는
+    실측 평균으로 채우려면, 기획/작성/검토처럼 길이가 완전히 다른 호출들을 구분해서 모아야
+    한다 — 이 값이 없던 예전 로그는 전부 한 줄로 섞여 있어서 그 용도로 못 쓴다.
+    """
     cost = (
         (input_tokens / 1_000_000 * INPUT_PRICE_PER_1M)
         + (output_tokens / 1_000_000 * OUTPUT_PRICE_PER_1M)
@@ -34,8 +40,10 @@ def log_usage(input_tokens: int, output_tokens: int, search_calls: int = 0) -> f
     with open(USAGE_FILE, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         if not file_exists:
-            writer.writerow(["date", "input_tokens", "output_tokens", "search_calls", "cost_usd"])
-        writer.writerow([date.today().isoformat(), input_tokens, output_tokens, search_calls, f"{cost:.6f}"])
+            writer.writerow(["date", "input_tokens", "output_tokens", "search_calls", "cost_usd", "stage"])
+        writer.writerow(
+            [date.today().isoformat(), input_tokens, output_tokens, search_calls, f"{cost:.6f}", stage]
+        )
     return cost
 
 
