@@ -594,6 +594,19 @@ explanation은 줄글 하나가 아니라 paragraphs 배열(문단 최소 2개, 
    talk_line과 같은 내용을 다시 압축해서 예고하지 않는다 — heading만 다른 이름을 쓰고 문단
    마지막 문장이 결국 talk_line을 미리 말해버리는 것도 같은 위반이다. 각 문단은
    research_findings의 새 사실로 끝나야지, 앞 내용을 압축 요약하는 문장으로 끝나면 안 된다.
+
+**이 문단 순서(내용 먼저, 제목 나중) 원칙은 문단 소제목뿐 아니라 축 전체의 title에도
+그대로 적용된다.** 스키마에서 paragraphs가 title보다 먼저 오는 이유가 이거다 — 축의
+최종 title도 문단을 다 쓴 뒤에, 실제로 그 문단들이 무슨 내용을 담았는지 보고 짓는다.
+위에서 "그 축의 title이 던진 질문"이라고 말한 건 기획 단계에서 이 축에 붙여준 제목
+(작성 지침 위쪽 조사 결과에 "[축 N: 제목 (family)]"로 표시된 것)을 방향 참고용으로
+쓰라는 뜻이지, 그 제목을 그대로 최종 title에 베끼라는 뜻이 아니다. 실제로 문단을 쓰다
+보면 기획 때 예상한 방향과 조금 다른 내용으로 채워지는 경우가 있다 — 예를 들어 기획
+제목이 "OO와 XX는 왜 다른가"였는데 실제로 조사 결과가 두 대상의 정의·범위 차이(각각
+"무엇인지")만 확인해줬다면("왜 다른가"에 답하는 인과관계·설계 의도까지는 근거가 없다면),
+최종 title도 "OO와 XX는 왜 다른가"를 그대로 쓰지 않고 실제로 쓴 내용에 맞게 "OO와
+XX는 무엇이 다른가"처럼 고쳐 짓는다 — 문단 내용이 실제로 답한 질문과 title이 던지는
+질문이 어긋나면, 그건 정확한 정보라도 독자가 "이게 왜 이 제목이지" 헷갈리게 만든다.
 날짜·수치·이름처럼 나열되는 사실이 3개 이상이면(예: 타임라인, 여러 관계자 발언, 여러 수치
 비교) 한 문장에 욱여넣지 말고 마크다운 불릿(`- `)으로 한 줄에 하나씩 뽑아서 목록으로 보여준다
 — 훑어보기 쉽게 하는 게 목적이다.
@@ -736,10 +749,9 @@ WRITER_SCHEMA = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["family", "title", "paragraphs", "talk_line", "confidence", "sensitive", "glossary_term"],
+                "required": ["family", "paragraphs", "title", "talk_line", "confidence", "sensitive", "glossary_term"],
                 "properties": {
                     "family": {"type": "string", "enum": AXIS_FAMILIES},
-                    "title": {"type": "string", "description": "이 축을 요약하는 짧은 제목"},
                     "paragraphs": {
                         "type": "array",
                         "minItems": 2,
@@ -747,7 +759,9 @@ WRITER_SCHEMA = {
                         "description": (
                             "이 축의 설명을 이루는 문단들. 각 문단마다 body를 먼저 채우고,"
                             " heading은 그렇게 채운 body를 보고 그 내용에 맞춰 나중에 짓는다"
-                            " — heading부터 정하고 거기 맞춰 body를 쓰지 않는다."
+                            " — heading부터 정하고 거기 맞춰 body를 쓰지 않는다. title(카드"
+                            " 전체 제목)보다도 이 필드를 먼저 채운다 — title은 이 문단들을"
+                            " 다 쓴 뒤에 그 실제 내용을 보고 짓는다."
                         ),
                         "items": {
                             "type": "object",
@@ -764,6 +778,14 @@ WRITER_SCHEMA = {
                                 },
                             },
                         },
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": (
+                            "이 축을 요약하는 짧은 제목. paragraphs를 다 쓴 뒤, 실제로 그 문단들이"
+                            " 무슨 내용을 담았는지 보고 짓는다 — 제목부터 먼저 정하고 그에 맞춰"
+                            " 문단을 쓰지 않는다(그러면 나중에 내용이 조금만 달라져도 제목과 어긋난다)."
+                        ),
                     },
                     "talk_line": {
                         "type": "string",
