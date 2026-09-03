@@ -27,7 +27,7 @@ from prompts import (
     REVIEW_SCHEMA,
     REVIEW_SYSTEM_PROMPT,
     WRITER_SCHEMA,
-    WRITER_SYSTEM_PROMPT,
+    build_writer_system_prompt,
 )
 from text_cleanup import strip_trailing_artifacts
 from usage_log import log_perplexity_usage, log_usage
@@ -190,11 +190,16 @@ def _write(client: OpenAI, document_block: dict, plan: dict, findings: list[dict
         f"### 기사 요약\n{chr(10).join('- ' + s for s in plan['summary'])}\n\n"
         f"### 조사 결과\n{findings_text}"
     )
+    # 이번 기사에 실제로 쓰이는 유형(family)의 세부 규칙만 골라서 지침에 넣는다 — 7개
+    # 유형 규칙을 매번 다 보여주면 지침이 길어질수록 개별 규칙 준수력이 흐려지는 문제가
+    # 있어서(prompts.build_writer_system_prompt 참고), 안 쓰는 유형 규칙은 뺀다.
+    families_used = {axis_plan["family"] for axis_plan in plan["axes"]}
+    writer_system_prompt = build_writer_system_prompt(list(families_used))
     response = client.responses.create(
         model=MODEL,
         max_output_tokens=24000,
         input=[
-            {"role": "system", "content": _with_feedback(WRITER_SYSTEM_PROMPT)},
+            {"role": "system", "content": _with_feedback(writer_system_prompt)},
             {"role": "user", "content": [document_block, {"type": "input_text", "text": writer_instruction}]},
         ],
         text={"format": {"type": "json_schema", "name": "article_writeup", "strict": True, "schema": WRITER_SCHEMA}},
