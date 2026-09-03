@@ -13,6 +13,7 @@ app.py(Streamlit 웹앱)와 regression_test.py(회귀 테스트) 양쪽에서 �
 
 import concurrent.futures
 import json
+from collections import Counter
 from urllib.parse import urlparse
 
 from openai import OpenAI
@@ -42,8 +43,18 @@ def _with_feedback(base_prompt: str) -> str:
     return f"{base_prompt}\n\n## 사용자가 남긴 과거 피드백 (반드시 참고해서 같은 실수를 반복하지 말 것)\n{notes}"
 
 
-def _plan(client: OpenAI, document_block: dict, url: str) -> tuple[dict, float]:
-    """1단계: 어떤 축이 필요하고, 축마다 뭘 검색해야 하는지 정한다. (검색 없음, 저렴함)"""
+PLAN_SAMPLES = 3
+# "정보성"이냐 "맥락의존형"이냐를 가르는 1단계 선분류 판단이, 같은 기사·같은 지침을
+# 넣어도 실행마다 결과가 바뀌는 게 실측으로 확인됐다(박진영 미국출장 기사 — 같은 기사를
+# 세 번 돌리는 동안 "정보성"과 "맥락의존형"을 오갔고, "정보성"으로 잘못 분류될 때마다
+# 인물·기관 배경 조사가 통째로 빠졌다). 기획 하나를 독립적으로 여러 번 돌려서 다수결로
+# 분류를 정하면, 어쩌다 한 번 잘못 분류되는 경우를 줄일 수 있다. 기획 단계는 검색이
+# 없어 저렴해서(1회 약 $0.01) 3배로 늘려도 부담이 작고, 동시에 돌리면 시간도 거의
+# 늘지 않는다.
+
+
+def _plan_once(client: OpenAI, document_block: dict, url: str) -> tuple[dict, float]:
+    """기획을 한 번 돌린다. _plan()이 이걸 여러 번 불러서 다수결로 합친다."""
     instruction = f"이 기사 원문을 분석해줘. 원문 URL: {url if url else '없음(파일로만 제공됨)'}"
     response = client.responses.create(
         model=MODEL,
@@ -58,6 +69,24 @@ def _plan(client: OpenAI, document_block: dict, url: str) -> tuple[dict, float]:
         raise RuntimeError(f"기획 단계가 끝까지 완료되지 않았어요 (status={response.status})")
     cost = log_usage(response.usage.input_tokens, response.usage.output_tokens, 0, stage="plan")
     return json.loads(response.output_text), cost
+
+
+def _plan(client: OpenAI, document_block: dict, url: str) -> tuple[dict, float]:
+    """1단계: 어떤 축이 필요하고, 축마다 뭘 검색해야 하는지 정한다. (검색 없음, 저렴함)
+
+    선분류(정보성/맥락의존형)만 따로 다수결로 정하는 대신, 기획 전체를 PLAN_SAMPLES번
+    독립적으로 돌려서 다수결로 나온 분류와 실제로 일치하는 기획 하나를 그대로 채택한다
+    — 분류만 바꿔치기하면 그 분류를 전제로 짠 축·검색 질문과 안 맞을 수 있어서, 처음부터
+    그 분류로 나온 기획 통째를 쓰는 쪽이 안전하다.
+    """
+    with concurrent.futures.ThreadPoolExecutor(max_workers=PLAN_SAMPLES) as executor:
+        results = list(executor.map(lambda _: _plan_once(client, document_block, url), range(PLAN_SAMPLES)))
+    plans = [plan for plan, _ in results]
+    total_cost = sum(cost for _, cost in results)
+
+    majority_classification = Counter(p["classification"] for p in plans).most_common(1)[0][0]
+    chosen = next(p for p in plans if p["classification"] == majority_classification)
+    return chosen, total_cost
 
 
 def _research_one(axis_plan: dict, perplexity_api_key: str) -> tuple[dict, float]:
