@@ -7,9 +7,17 @@
 실제 분석 로직은 analysis_pipeline.py의 것을 그대로 가져다 쓴다 — app.py와 로직이
 갈라지지 않게 하기 위해서다.
 
+예전에는 이 스크립트가 카드를 그대로 출력만 하고, "겹치나? 배경 빠졌나?"는 매번 사람이
+눈으로 읽고 판단했다. 재현이 불안정한 버그가 많아서 여러 번 돌려봐야 하는데, 그때마다
+사람이 처음부터 다시 읽어야 하는 게 부담이었다 — 그래서 eval_checks.py로 두 가지 자동
+점검을 추가했다: (1) 카드 임베딩 유사도로 "겹칠 수도 있는" 쌍을 표시, (2) 원문에서 뽑은
+고유명사가 카드에 실제로 들어갔는지 대조해서 "배경 누락일 수도 있는" 이름을 표시. 둘 다
+완전 자동 판정이 아니라 "여기부터 사람이 보자"는 필터다 — 최종 판단은 여전히 사람이
+아래 원문 카드를 읽고 내린다.
+
 Notion에는 저장하지 않는다 — 테스트 결과가 실제 기록에 섞이면 안 되니까.
 usage_log.csv / perplexity_usage_log.csv에는 정상적으로 비용이 기록된다(실제 API
-호출이라 OpenAI + Perplexity 양쪽 다 돈이 든다).
+호출이라 OpenAI + Perplexity 양쪽 다 돈이 든다 — 임베딩·고유명사 추출 호출도 마찬가지).
 
 사용법:
     python regression_test.py            # 전체 테스트 케이스 실행
@@ -19,7 +27,10 @@ usage_log.csv / perplexity_usage_log.csv에는 정상적으로 비용이 기록�
 import sys
 import tomllib
 
+from openai import OpenAI
+
 from analysis_pipeline import analyze_article
+from eval_checks import extract_entities, find_overlapping_pairs, missing_entities
 from fetch_article import fetch_article_text
 
 # (기사 URL, 이 기사에서 과거에 어떤 문제가 있었는지 — 재발했는지 직접 눈으로 확인할 포인트)
@@ -62,6 +73,17 @@ TEST_CASES = [
             "각 문단에 그 내용에 맞는 굵은 소제목이 붙어 있는가",
         ],
     ),
+    (
+        "박진영 미국출장 주의조치",
+        "https://www.hankyung.com/article/2026090205607",
+        [
+            "'과거 썰'과 '싸움의 이유'가 국회 vs 위원회 논쟁을 프레임만 바꿔 반복하지 않는가"
+            " (감독기관 지적 vs 당사자 해명 패턴 — 2026-09-02에 이 패턴을 놓쳐서 규칙을 보강함)",
+            "박진영이 누구이고 왜 위원장이 됐는지, 대중문화교류위원회가 뭔지가 카드 어딘가에"
+            " 실제로 담겼는가 (직함만 있고 설명 없는 인물이 사건 중심인 기사인데도"
+            " '정보성'으로 잘못 분류돼 배경 조사가 통째로 빠졌던 적이 있음)",
+        ],
+    ),
 ]
 
 
@@ -93,8 +115,36 @@ def run_case(secrets: dict, name: str, url: str, watch_for: list[str]) -> None:
         print(f"에러: {e}\n")
         return
 
+    # 자동 점검 — 완전한 판정이 아니라 "여기부터 사람이 읽어보자"는 필터. 판정 자체를
+    # 대신하는 게 아니라서 실패해도(예: 임베딩 API 오류) 전체 테스트를 죽이지 않는다.
+    client = OpenAI(api_key=secrets["OPENAI_API_KEY"])
+    try:
+        overlap_pairs = find_overlapping_pairs(client, data["axes"])
+        entities = extract_entities(client, article_text)
+        missing = missing_entities(entities, data["axes"])
+    except Exception as e:  # noqa: BLE001
+        print(f"(자동 점검 중 오류 — 건너뜀: {e})")
+        overlap_pairs, entities, missing = [], [], []
+
     print(f"(호출 비용: 약 ${cost:.4f})")
     print(f"제목: {data['title']}")
+
+    print("\n--- 자동 점검 ---")
+    if overlap_pairs:
+        for i, j, sim in overlap_pairs:
+            title_i, title_j = data["axes"][i]["title"], data["axes"][j]["title"]
+            print(f"  ⚠️ 중복 의심 (유사도 {sim:.2f}): [{title_i}] ↔ [{title_j}] — 사람이 다시 확인")
+    else:
+        print("  ✅ 카드끼리 겹침 의심 없음")
+    if entities:
+        if missing:
+            print(f"  ⚠️ 카드에 안 보이는 원문 고유명사: {', '.join(missing)} — 배경 누락일 수 있음, 사람이 다시 확인")
+        else:
+            print(f"  ✅ 원문 고유명사 {len(entities)}개 모두 카드에 등장")
+    else:
+        print("  (고유명사 추출 실패 — 이 점검은 건너뜀)")
+
+    print("\n--- 카드 원문 ---")
     for axis in data["axes"]:
         icon = "⚠️" if axis["sensitive"] else "  "
         print(f"\n{icon} [{axis['family']}] {axis['title']}")
@@ -105,6 +155,10 @@ def run_case(secrets: dict, name: str, url: str, watch_for: list[str]) -> None:
 
 
 def main():
+    # Windows 콘솔 기본 인코딩(cp949)은 "—" 같은 유니코드 문자를 못 뱉어서, 파일로
+    # 리다이렉트하든 콘솔에 바로 찍든 UnicodeEncodeError로 죽는 경우가 있었다 — UTF-8로
+    # 강제한다.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     keyword = sys.argv[1] if len(sys.argv) > 1 else None
     secrets = load_secrets()
 
