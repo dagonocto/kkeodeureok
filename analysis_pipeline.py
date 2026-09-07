@@ -159,6 +159,32 @@ def _research(
     return findings, fresh_terms, total_cost
 
 
+def _citations_to_references(citations: list[dict]) -> list[dict]:
+    """Perplexity citations({title, url})를 카드에 붙일 출처 형식({source, title, url})으로
+    바꾼다. Perplexity는 매체명을 안 주므로 URL 도메인에서 뽑는다 — AI가 다시 지어내게
+    하지 않고, 실제로 검색에 쓰인 URL을 코드로 그대로 붙이는 방식이라 엉뚱한 출처가
+    끼어들 위험이 없다.
+
+    Perplexity 쪽 citations는 완전히 똑같은 URL 문자열만 걸러내는데, 같은 기사를
+    쿼리스트링(?mid=... 등)만 다르게 여러 번 인용하는 경우가 실측에서 확인됐다 — 그래서
+    여기서 도메인+경로(쿼리스트링 제외) 기준으로 한 번 더 중복을 제거한다.
+    """
+    refs = []
+    seen = set()
+    for c in citations:
+        url = c.get("url")
+        if not url:
+            continue
+        parsed = urlparse(url)
+        dedup_key = (parsed.netloc, parsed.path)
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
+        domain = parsed.netloc.removeprefix("www.")
+        refs.append({"source": domain or "출처", "title": c.get("title") or domain or url, "url": url})
+    return refs
+
+
 def _save_new_glossary_terms(
     written_axes: list[dict], fresh_terms: dict[str, str], notion_token: str, glossary_data_source_id: str
 ) -> None:
@@ -292,13 +318,26 @@ def analyze_article(
     if fresh_terms and notion_token and glossary_data_source_id:
         _save_new_glossary_terms(reviewed_axes, fresh_terms, notion_token, glossary_data_source_id)
 
+    # 카드마다 실제로 근거로 쓴 출처를 붙인다 — coverage_question이 기획 단계부터 검토
+    # 단계까지 글자 하나 안 바뀌고 그대로 이어진다는 걸 이용해서, 그 질문을 담당했던
+    # 원래 축의 검색 결과(findings)에서 실제 인용 URL을 그대로 가져온다. AI가 출처를
+    # 다시 나열하게 하지 않고 코드가 실제 데이터를 붙이는 방식이라 출처 오지정 위험이 없다.
+    # (검토 단계에서 카드 두 개가 하나로 합쳐진 경우, 살아남은 쪽의 출처만 붙는다 — 완벽한
+    # 대응은 아니지만 첫 버전으로는 충분하다.)
+    question_to_citations = {
+        axis_plan["coverage_question"]: (findings[i] or {}).get("citations", [])
+        for i, axis_plan in enumerate(plan["axes"])
+    }
+
     # plan에도 "axes"가 있지만 research_query만 있는 기획 단계 버전이라, 검토까지 끝난
     # 완성된 axes로 덮어쓴다. coverage_question은 기획·작성·검토 사이에서만 쓰는 내부
     # 역할표라서, 화면과 Notion에 보이는 최종 카드에서는 뺀다.
-    public_axes = [
-        {key: value for key, value in axis.items() if key != "coverage_question"}
-        for axis in reviewed_axes
-    ]
+    public_axes = []
+    for axis in reviewed_axes:
+        citations = question_to_citations.get(axis.get("coverage_question"), [])
+        axis_out = {key: value for key, value in axis.items() if key != "coverage_question"}
+        axis_out["references"] = _citations_to_references(citations)[:3]
+        public_axes.append(axis_out)
     data = {**plan, "axes": public_axes, "references": written["references"]}
 
     # 모델이 언론사명을 못 찾으면 "확인 불가"를 돌려주는데, 그러면 Notion 페이지에

@@ -138,6 +138,8 @@ def build_children_blocks(data: dict) -> list[dict]:
         blocks.append(_heading2("🔥 꺼드럭 포인트"))
         for axis in data["axes"]:
             blocks.append(_axis_callout(axis))
+            for ref in axis.get("references", []):
+                blocks.append(_reference_bullet(ref["source"], ref["title"], ref["url"]))
 
     blocks.append(_heading2("출처"))
     blocks.append(_reference_bullet(data["source_name"], "기사 원문", data["source_url"]))
