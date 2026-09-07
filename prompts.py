@@ -454,6 +454,19 @@ PLANNING_SYSTEM_PROMPT = f"""너는 뉴스 기사를 읽고 "어떤 배경지식
 - summary: 핵심 포인트 2~4개, 짧은 문장으로
 """
 
+PLANNING_SYSTEM_PROMPT += """
+
+## 카드 역할표 (반드시 작성)
+카드를 고르기 전에, 독자가 이 기사를 이해하려면 꼭 답을 알아야 하는 질문을 먼저 쪼갠다.
+그리고 각 카드에는 `coverage_question`으로 자기 카드만 책임질 질문 하나를 적는다.
+
+- 질문은 "무엇인가", "왜 지금 중요한가", "누가 왜 이 자리에 있나", "어떤 기준으로 갈리나"처럼 독자가 실제로 궁금해할 완결된 질문으로 쓴다. "배경 설명", "논란 정리"처럼 두루뭉술한 말은 안 된다.
+- 카드마다 coverage_question은 반드시 달라야 한다. 같은 질문에 답할 카드 두 개를 만들지 않는다.
+- 기사에 낯선 인물·기관·행사가 사건의 핵심인데 원문이 정체나 등장 배경을 설명하지 않으면, 그 정체·등장 배경을 답하는 질문을 반드시 한 카드에 배정한다. 절차·논쟁 카드만 여러 장 만들고 이 질문을 빼면 안 된다.
+- 작성 단계에서 이 질문에 답할 근거를 찾을 수 있도록 research_query에도 그 질문의 핵심 대상을 넣는다.
+- 카드 수를 채우기 위해 질문을 잘게 쪼개지 않는다. 질문 둘이 결국 같은 날짜·사실·인용문을 반복하게 된다면 하나로 합친다.
+"""
+
 PLANNING_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -479,10 +492,14 @@ PLANNING_SCHEMA = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["family", "title", "research_query", "glossary_term"],
+                "required": ["family", "title", "coverage_question", "research_query", "glossary_term"],
                 "properties": {
                     "family": {"type": "string", "enum": AXIS_FAMILIES},
                     "title": {"type": "string", "description": "이 축을 요약하는 짧은 제목"},
+                    "coverage_question": {
+                        "type": "string",
+                        "description": "이 카드만 책임지고 답할 독자의 완결된 질문 하나. 다른 축과 겹치지 않는다.",
+                    },
                     "research_query": {
                         "type": "string",
                         "description": "이 축을 쓰는 데 필요한 사실을 확인하기 위해 검색 엔진에 그대로 전달할 구체적 질문",
@@ -634,6 +651,16 @@ XX는 무엇이 다른가"처럼 고쳐 짓는다 — 문단 내용이 실제로
 # "세금/법률 숫자 규칙"·"문체" 같은 공통 규칙과 달리 아래 것들은 특정 유형에만 해당하는
 # 내용이라 — 이번에 안 쓰는 유형의 규칙까지 매번 다 보여줄 필요가 없다. build_writer_system_prompt()가
 # 실제로 골라진 유형의 것만 조립해서 붙인다(안 쓰는 유형이 있으면 그만큼 지침이 짧아진다).
+WRITER_SYSTEM_PROMPT_HEAD += """
+
+## 카드 역할표 준수
+조사 결과의 각 축에는 `반드시 답할 질문`이 붙어 있다. 이 질문이 그 카드의 업무 범위다.
+- 해당 카드의 문단은 이 질문에 실제로 답해야 한다. 관련은 있지만 다른 질문으로 빠지지 않는다.
+- 다른 카드의 반드시 답할 질문에 해당하는 사실·설명은 그 카드에 넘긴다. 같은 날짜·인용문·사건 경위를 두 카드에서 반복해 답하지 않는다.
+- coverage_question 필드는 기획 단계에서 받은 문장을 글자 하나 바꾸지 말고 그대로 반환한다.
+- 조사 결과가 부족해 이 질문에 근거 있게 답할 수 없으면, 그 질문을 다른 카드에 떠넘겨 반복하지 않는다. 그 축 자체를 뺀다.
+"""
+
 WRITER_FAMILY_RULES: dict[str, str] = {
     "과거 썰": """- 과거 썰 축의 제목이 "왜 ~하는지"·"~하는 이유"처럼 배경·경위를 담겠다고 예고했다면, 그
   내용이 실제로 역사적·정치적 경위(언제부터 논의됐는지, 어떤 사건이 계기였는지, 어떤 반대·
@@ -749,9 +776,13 @@ WRITER_SCHEMA = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["family", "paragraphs", "title", "talk_line", "confidence", "sensitive", "glossary_term"],
+                "required": ["family", "coverage_question", "paragraphs", "title", "talk_line", "confidence", "sensitive", "glossary_term"],
                 "properties": {
                     "family": {"type": "string", "enum": AXIS_FAMILIES},
+                    "coverage_question": {
+                        "type": "string",
+                        "description": "기획 단계에서 받은 이 카드의 전담 질문을 글자 하나 바꾸지 말고 그대로 돌려준다.",
+                    },
                     "paragraphs": {
                         "type": "array",
                         "minItems": 2,
@@ -871,6 +902,16 @@ REVIEW_SYSTEM_PROMPT = """너는 이미 작성된 뉴스 분석 카드들을 검
 - 결과 axes 배열은 입력으로 받은 카드 개수와 같거나 더 적어야 한다. 더 많아지면 안 된다.
 """
 
+REVIEW_SYSTEM_PROMPT += """
+
+## 카드 역할표 최종 점검
+입력 카드마다 coverage_question(이 카드가 전담할 질문)이 있다.
+- 각 카드는 자기 coverage_question에 실제로 답해야 한다. 제목이 그 질문과 다른 말을 하거나, 본문이 질문에 답하지 않으면 자연스럽게 고친다.
+- 서로 다른 두 카드의 coverage_question이 사실상 같은 질문이면, 더 완성도 높은 하나만 남긴다.
+- 두 카드가 다른 질문을 맡았어도, 실제 본문이 같은 날짜·경위·인용문을 반복해서 그 질문에 답하지 못하면 중복으로 처리한다.
+- coverage_question은 기획 단계의 역할표이므로 수정하지 않는다. 카드를 통째로 뺄 때만 그 질문도 함께 사라진다.
+"""
+
 REVIEW_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -883,10 +924,11 @@ REVIEW_SCHEMA = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["family", "title", "explanation", "talk_line", "confidence", "sensitive", "glossary_term"],
+                "required": ["family", "title", "coverage_question", "explanation", "talk_line", "confidence", "sensitive", "glossary_term"],
                 "properties": {
                     "family": {"type": "string", "enum": AXIS_FAMILIES},
                     "title": {"type": "string", "description": "이 축을 요약하는 짧은 제목"},
+                    "coverage_question": {"type": "string", "description": "기획 단계에서 정한 이 카드의 전담 질문. 수정하지 않는다."},
                     "explanation": {"type": "string"},
                     "talk_line": {
                         "type": "string",

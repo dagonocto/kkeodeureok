@@ -180,13 +180,15 @@ def _write(client: OpenAI, document_block: dict, plan: dict, findings: list[dict
     """3단계: 원문 + 조사 결과를 근거로 실제 explanation/talk_line/references를 쓴다."""
     findings_text = "\n\n".join(
         f"[축 {i + 1}: {axis_plan['title']} ({axis_plan['family']})]\n"
+        f"반드시 답할 질문: {axis_plan['coverage_question']}\n"
         f"검색 질문: {axis_plan['research_query']}\n"
         f"조사 결과: {finding['answer']}\n"
         f"출처: {', '.join(c['url'] for c in finding['citations'] if c.get('url')) or '없음'}"
         for i, (axis_plan, finding) in enumerate(zip(plan["axes"], findings))
     )
     writer_instruction = (
-        "기사 원문과 아래 조사 결과를 바탕으로 각 축의 설명을 작성해줘.\n\n"
+        "기사 원문과 아래 조사 결과를 바탕으로 각 축의 설명을 작성해줘. 각 카드에는 "
+        "반드시 답할 질문이 하나씩 있으니, 카드가 그 질문에만 답하고 다른 카드의 일을 반복하지 않게 해줘.\n\n"
         f"### 기사 요약\n{chr(10).join('- ' + s for s in plan['summary'])}\n\n"
         f"### 조사 결과\n{findings_text}"
     )
@@ -291,8 +293,13 @@ def analyze_article(
         _save_new_glossary_terms(reviewed_axes, fresh_terms, notion_token, glossary_data_source_id)
 
     # plan에도 "axes"가 있지만 research_query만 있는 기획 단계 버전이라, 검토까지 끝난
-    # 완성된 axes로 덮어쓴다.
-    data = {**plan, "axes": reviewed_axes, "references": written["references"]}
+    # 완성된 axes로 덮어쓴다. coverage_question은 기획·작성·검토 사이에서만 쓰는 내부
+    # 역할표라서, 화면과 Notion에 보이는 최종 카드에서는 뺀다.
+    public_axes = [
+        {key: value for key, value in axis.items() if key != "coverage_question"}
+        for axis in reviewed_axes
+    ]
+    data = {**plan, "axes": public_axes, "references": written["references"]}
 
     # 모델이 언론사명을 못 찾으면 "확인 불가"를 돌려주는데, 그러면 Notion 페이지에
     # 출처가 아예 안 보인다. URL의 도메인이라도 있으면 그걸로 대신 채운다.
