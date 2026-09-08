@@ -3,11 +3,16 @@
 analyze_article()가 돌려주는 결과(dict) 하나를 받아서, 디자인 시안과 같은 톤의
 인스타그램 카드뉴스 PNG 세트(1080x1350, 캐러셀 순서대로 번호 붙여 저장)를 만든다.
 
-브라우저나 별도 렌더링 엔진 없이 Pillow만으로 직접 그린다 — 그래서 리포에 폰트
-파일을 넣지 않아도, Windows에 원래 깔려있는 한글 폰트(맑은 고딕)와 이모지 폰트
-(Segoe UI Emoji)를 그대로 찾아 쓴다. 우분투/맥에서 돌릴 때를 위한 대체 경로도
-같이 찾아본다 — 그래도 못 찾으면 assets/fonts/ 에 폰트를 넣고 아래
-FONT_REGULAR_CANDIDATES / FONT_BOLD_CANDIDATES 맨 앞에 경로를 추가하면 된다.
+브라우저나 별도 렌더링 엔진 없이 Pillow만으로 직접 그린다. 한글 폰트는 리포에
+직접 넣어둔 assets/fonts/Pretendard-*.otf(SIL OFL 라이선스, app.py 화면과 같은
+폰트)를 최우선으로 쓴다 — 처음엔 OS에 이미 깔린 폰트(Windows 맑은 고딕 등)를
+찾아 쓰는 방식이었는데, Streamlit Cloud(리눅스) 배포 환경엔 한글 폰트가 아예
+없어서 배포 때마다 apt로 설치해야 했다. 그런데 그 서버의 apt 저장소 중 하나
+(bullseye-security)가 유효기간이 지나 있어서 apt-get 자체가 실패했고, 그 바람에
+카드뉴스뿐 아니라 앱 전체가 못 뜨는 사고로 이어진 적이 있다(2026-09-08) — 그래서
+서버 상태에 기대지 않도록 폰트를 리포에 직접 넣는 방식으로 바꿨다. 이모지는
+컬러 이모지 폰트 파일이 커서(수 MB) 여기엔 안 넣었다 — 없으면 그냥 이모지 없이
+그려질 뿐, 실패하지는 않는다(draw_emoji가 조용히 건너뜀).
 
 사용법:
     # 이미 Notion에 저장된 기사를 카드뉴스로
@@ -71,12 +76,16 @@ BRAND_HANDLE = "@kkeodeureok"
 # 폰트 찾기
 # ============================================================
 
+_ASSET_FONT_DIR = Path(__file__).resolve().parent / "assets" / "fonts"
+
 FONT_REGULAR_CANDIDATES = [
+    str(_ASSET_FONT_DIR / "Pretendard-Regular.otf"),
     "C:/Windows/Fonts/malgun.ttf",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     "/System/Library/Fonts/AppleSDGothicNeo.ttc",
 ]
 FONT_BOLD_CANDIDATES = [
+    str(_ASSET_FONT_DIR / "Pretendard-Bold.otf"),
     "C:/Windows/Fonts/malgunbd.ttf",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
     "/System/Library/Fonts/AppleSDGothicNeo.ttc",
@@ -100,10 +109,9 @@ def _resolve_fonts() -> tuple[str, str, str | None]:
     bold = _first_existing(FONT_BOLD_CANDIDATES)
     if not regular or not bold:
         raise RuntimeError(
-            "한글 폰트를 찾지 못했어요. Windows라면 보통 맑은 고딕(C:/Windows/Fonts/malgun.ttf)이 "
-            "기본으로 있어야 하는데 이 컴퓨터엔 없나 봐요 — assets/fonts/ 에 폰트 파일(.ttf/.otf)을 "
-            "넣고 cardnews.py 맨 위 FONT_REGULAR_CANDIDATES/FONT_BOLD_CANDIDATES 리스트 맨 앞에 "
-            "그 경로를 추가해주세요."
+            f"한글 폰트를 찾지 못했어요. 리포에 들어있어야 할 {_ASSET_FONT_DIR}/Pretendard-Regular.otf, "
+            "Pretendard-Bold.otf가 없거나(git에 안 올라갔거나 지워짐), 그마저도 없으면 이 컴퓨터의 "
+            "OS 폰트(Windows 맑은 고딕 등)도 못 찾은 상태예요."
         )
     emoji = _first_existing(EMOJI_FONT_CANDIDATES)
     return regular, bold, emoji

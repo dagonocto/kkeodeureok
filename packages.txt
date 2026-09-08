@@ -1,2 +1,0 @@
-fonts-noto-cjk
-fonts-noto-color-emoji
