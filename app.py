@@ -23,7 +23,6 @@ import streamlit.components.v1 as components
 from openai import OpenAI
 
 import analysis_pipeline
-import cardnews
 import glossary
 import story_thread
 from feedback import save_feedback_note
@@ -32,6 +31,16 @@ from notion_client import append_axis_block, create_notion_page, list_recent_pag
 from prompts import FOLLOWUP_SCHEMA, FOLLOWUP_SYSTEM_PROMPT
 from text_cleanup import strip_trailing_artifacts
 from usage_log import log_usage
+
+# cardnews는 카드뉴스 PNG를 그릴 한글 폰트를 파일을 불러오는 순간(import 시점) 바로
+# 찾는다 — 이 서버(리눅스)에 packages.txt로 설치한 폰트가 어떤 이유로든 없거나 깨지면
+# import 자체가 예외를 던진다. 카드뉴스는 있으면 좋은 부가 기능이지 핵심 기능(기사
+# 분석)이 아니므로, 이 실패 때문에 앱 전체가 못 뜨는 일은 없어야 한다 — 실패하면
+# cardnews를 None으로 두고, 아래 UI에서 그 경우 버튼 자체를 숨긴다.
+try:
+    import cardnews
+except Exception:  # noqa: BLE001 - 카드뉴스 기능만 조용히 비활성화하고 앱은 계속 뜨게 한다
+    cardnews = None
 
 MODEL = "gpt-5.4-mini"
 
@@ -387,6 +396,8 @@ def build_cardnews_zip(data: dict) -> bytes:
     그리게 한 다음 그 파일들을 메모리 위의 zip으로 다시 묶는다 — 브라우저는 파일
     하나만 다운로드할 수 있어서 여러 장을 한 번에 주려면 zip으로 묶는 게 제일 간단하다.
     """
+    if cardnews is None:
+        raise RuntimeError("이 서버에 카드뉴스용 한글 폰트가 설치되지 않았어요.")
     with tempfile.TemporaryDirectory() as tmp_dir:
         paths = cardnews.render_cardnews(data, tmp_dir)
         buf = io.BytesIO()
@@ -719,26 +730,27 @@ if st.session_state.result:
         st.divider()
         render_result(st.session_state.result)
 
-        st.divider()
-        st.markdown("**🎨 카드뉴스로 공유하기**")
-        st.caption("인스타그램 캐러셀 형태(1080x1350) PNG 세트를 만들어드려요.")
-        if st.button("카드뉴스 만들기"):
-            with st.spinner("카드뉴스를 그리는 중이에요..."):
-                try:
-                    st.session_state.cardnews_zip = build_cardnews_zip(st.session_state.result)
-                    st.session_state.cardnews_zip_title = st.session_state.result["title"]
-                except Exception as e:  # noqa: BLE001
-                    st.error(f"카드뉴스를 만드는 중 문제가 발생했어요: {e}")
-        if (
-            st.session_state.cardnews_zip
-            and st.session_state.cardnews_zip_title == st.session_state.result["title"]
-        ):
-            st.download_button(
-                "📥 카드뉴스 PNG 다운로드 (zip)",
-                data=st.session_state.cardnews_zip,
-                file_name=f"{_safe_filename(st.session_state.result['title'])}_카드뉴스.zip",
-                mime="application/zip",
-            )
+        if cardnews is not None:
+            st.divider()
+            st.markdown("**🎨 카드뉴스로 공유하기**")
+            st.caption("인스타그램 캐러셀 형태(1080x1350) PNG 세트를 만들어드려요.")
+            if st.button("카드뉴스 만들기"):
+                with st.spinner("카드뉴스를 그리는 중이에요..."):
+                    try:
+                        st.session_state.cardnews_zip = build_cardnews_zip(st.session_state.result)
+                        st.session_state.cardnews_zip_title = st.session_state.result["title"]
+                    except Exception as e:  # noqa: BLE001
+                        st.error(f"카드뉴스를 만드는 중 문제가 발생했어요: {e}")
+            if (
+                st.session_state.cardnews_zip
+                and st.session_state.cardnews_zip_title == st.session_state.result["title"]
+            ):
+                st.download_button(
+                    "📥 카드뉴스 PNG 다운로드 (zip)",
+                    data=st.session_state.cardnews_zip,
+                    file_name=f"{_safe_filename(st.session_state.result['title'])}_카드뉴스.zip",
+                    mime="application/zip",
+                )
 
         st.divider()
         st.markdown("**🙋 더 궁금한 점 있어요?**")
