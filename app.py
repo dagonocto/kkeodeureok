@@ -11,14 +11,19 @@ Streamlit은 위에서부터 아래로 이 파일을 순서대로 실행해서 �
 
 import base64
 import concurrent.futures
+import io
 import json
+import re
+import tempfile
 import time
+import zipfile
 
 import streamlit as st
 import streamlit.components.v1 as components
 from openai import OpenAI
 
 import analysis_pipeline
+import cardnews
 import glossary
 import story_thread
 from feedback import save_feedback_note
@@ -194,6 +199,8 @@ if "result" not in st.session_state:
     st.session_state.last_cost = None
     st.session_state.document_block = None
     st.session_state.url_for_notion = None
+    st.session_state.cardnews_zip = None
+    st.session_state.cardnews_zip_title = None
 if "dup_warning_url" not in st.session_state:
     # 같은 기사를 실수로 두 번 분석하면 돈도 두 번 나가고 Notion에 중복 페이지가 쌓인다.
     # 그래서 "분석 시작"을 누르면 먼저 이미 저장된 기사인지 확인하고, 맞으면 여기에
@@ -366,6 +373,27 @@ def _md_safe(text: str) -> str:
     화면에 표시하기 직전에 이스케이프해서 있는 그대로 보이게 한다.
     """
     return text.replace("~", "\\~")
+
+
+def _safe_filename(text: str) -> str:
+    """윈도우/맥/브라우저가 파일명으로 못 쓰는 문자(\\ / : * ? " < > |)를 밑줄로 바꾼다."""
+    return re.sub(r'[\\/:*?"<>|]', "_", text).strip() or "카드뉴스"
+
+
+def build_cardnews_zip(data: dict) -> bytes:
+    """분석 결과로 카드뉴스 PNG 세트를 그려서 zip으로 묶은 바이트를 돌려준다.
+
+    cardnews.render_cardnews()는 디스크에 PNG 파일로 저장하는 함수라, 임시 폴더에
+    그리게 한 다음 그 파일들을 메모리 위의 zip으로 다시 묶는다 — 브라우저는 파일
+    하나만 다운로드할 수 있어서 여러 장을 한 번에 주려면 zip으로 묶는 게 제일 간단하다.
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        paths = cardnews.render_cardnews(data, tmp_dir)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for p in paths:
+                zf.write(p, arcname=p.name)
+        return buf.getvalue()
 
 
 def render_result(data: dict, key_prefix: str = "") -> None:
@@ -639,6 +667,8 @@ def perform_analysis():
         st.session_state.document_block = document_block
         st.session_state.url_for_notion = url_for_notion
         st.session_state.dup_warning_url = None
+        st.session_state.cardnews_zip = None
+        st.session_state.cardnews_zip_title = None
         save_to_notion(result)
         if input_mode == "링크 입력":
             # 다음 기사를 바로 이어서 검색할 수 있도록 입력창을 비운다.
@@ -688,6 +718,27 @@ if st.session_state.result:
         # 에서 여전히 내부적으로 쓰인다.
         st.divider()
         render_result(st.session_state.result)
+
+        st.divider()
+        st.markdown("**🎨 카드뉴스로 공유하기**")
+        st.caption("인스타그램 캐러셀 형태(1080x1350) PNG 세트를 만들어드려요.")
+        if st.button("카드뉴스 만들기"):
+            with st.spinner("카드뉴스를 그리는 중이에요..."):
+                try:
+                    st.session_state.cardnews_zip = build_cardnews_zip(st.session_state.result)
+                    st.session_state.cardnews_zip_title = st.session_state.result["title"]
+                except Exception as e:  # noqa: BLE001
+                    st.error(f"카드뉴스를 만드는 중 문제가 발생했어요: {e}")
+        if (
+            st.session_state.cardnews_zip
+            and st.session_state.cardnews_zip_title == st.session_state.result["title"]
+        ):
+            st.download_button(
+                "📥 카드뉴스 PNG 다운로드 (zip)",
+                data=st.session_state.cardnews_zip,
+                file_name=f"{_safe_filename(st.session_state.result['title'])}_카드뉴스.zip",
+                mime="application/zip",
+            )
 
         st.divider()
         st.markdown("**🙋 더 궁금한 점 있어요?**")
