@@ -17,6 +17,7 @@ import re
 import tempfile
 import time
 import zipfile
+from pathlib import Path
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -41,6 +42,10 @@ try:
     import cardnews
 except Exception:  # noqa: BLE001 - 카드뉴스 기능만 조용히 비활성화하고 앱은 계속 뜨게 한다
     cardnews = None
+try:
+    import report_pdf
+except Exception:  # noqa: BLE001 - PDF 기능만 조용히 비활성화하고 앱은 계속 뜨게 한다
+    report_pdf = None
 
 MODEL = "gpt-5.4-mini"
 
@@ -210,6 +215,8 @@ if "result" not in st.session_state:
     st.session_state.url_for_notion = None
     st.session_state.cardnews_zip = None
     st.session_state.cardnews_zip_title = None
+    st.session_state.report_pdf_bytes = None
+    st.session_state.report_pdf_title = None
 if "dup_warning_url" not in st.session_state:
     # 같은 기사를 실수로 두 번 분석하면 돈도 두 번 나가고 Notion에 중복 페이지가 쌓인다.
     # 그래서 "분석 시작"을 누르면 먼저 이미 저장된 기사인지 확인하고, 맞으면 여기에
@@ -405,6 +412,17 @@ def build_cardnews_zip(data: dict) -> bytes:
             for p in paths:
                 zf.write(p, arcname=p.name)
         return buf.getvalue()
+
+
+def build_report_pdf_bytes(data: dict) -> bytes:
+    """분석 결과를 A4 PDF 리포트로 그려서 바이트로 돌려준다. API 호출 없이 로컬에서만
+    렌더링해서(report_pdf.py) 비용이 들지 않는다."""
+    if report_pdf is None:
+        raise RuntimeError("이 서버에 리포트용 폰트가 설치되지 않았어요.")
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        out_path = Path(tmp_dir) / "report.pdf"
+        report_pdf.build_report_pdf(data, out_path)
+        return out_path.read_bytes()
 
 
 def render_result(data: dict, key_prefix: str = "") -> None:
@@ -680,6 +698,8 @@ def perform_analysis():
         st.session_state.dup_warning_url = None
         st.session_state.cardnews_zip = None
         st.session_state.cardnews_zip_title = None
+        st.session_state.report_pdf_bytes = None
+        st.session_state.report_pdf_title = None
         save_to_notion(result)
         if input_mode == "링크 입력":
             # 다음 기사를 바로 이어서 검색할 수 있도록 입력창을 비운다.
@@ -750,6 +770,28 @@ if st.session_state.result:
                     data=st.session_state.cardnews_zip,
                     file_name=f"{_safe_filename(st.session_state.result['title'])}_카드뉴스.zip",
                     mime="application/zip",
+                )
+
+        if report_pdf is not None:
+            st.divider()
+            st.markdown("**📄 분석지 PDF로 받기**")
+            st.caption("A4 크기로 정리해드려요 — 인쇄하거나 보관하기 좋아요.")
+            if st.button("PDF 만들기"):
+                with st.spinner("PDF를 만드는 중이에요..."):
+                    try:
+                        st.session_state.report_pdf_bytes = build_report_pdf_bytes(st.session_state.result)
+                        st.session_state.report_pdf_title = st.session_state.result["title"]
+                    except Exception as e:  # noqa: BLE001
+                        st.error(f"PDF를 만드는 중 문제가 발생했어요: {e}")
+            if (
+                st.session_state.report_pdf_bytes
+                and st.session_state.report_pdf_title == st.session_state.result["title"]
+            ):
+                st.download_button(
+                    "📥 PDF 다운로드",
+                    data=st.session_state.report_pdf_bytes,
+                    file_name=f"{_safe_filename(st.session_state.result['title'])}_분석지.pdf",
+                    mime="application/pdf",
                 )
 
         st.divider()
