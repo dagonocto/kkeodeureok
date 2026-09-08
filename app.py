@@ -750,49 +750,55 @@ if st.session_state.result:
         st.divider()
         render_result(st.session_state.result)
 
-        if cardnews is not None:
+        # 카드뉴스(화면 공유용 PNG)와 분석지 PDF(보관·인쇄용) — 둘 다 로컬 렌더링이라
+        # 나란히 놓아도 API 비용이 늘지 않는다. 둘 중 하나만 서버에서 쓸 수 있는
+        # 상황(폰트 로딩 실패 등)이어도 그 칸만 비고 나머지는 그대로 동작해야 해서,
+        # 컬럼 자체는 항상 만들고 안쪽 내용만 조건부로 채운다.
+        if cardnews is not None or report_pdf is not None:
             st.divider()
-            st.markdown("**🎨 카드뉴스로 공유하기**")
-            st.caption("인스타그램 캐러셀 형태(1080x1350) PNG 세트를 만들어드려요.")
-            if st.button("카드뉴스 만들기"):
-                with st.spinner("카드뉴스를 그리는 중이에요..."):
-                    try:
-                        st.session_state.cardnews_zip = build_cardnews_zip(st.session_state.result)
-                        st.session_state.cardnews_zip_title = st.session_state.result["title"]
-                    except Exception as e:  # noqa: BLE001
-                        st.error(f"카드뉴스를 만드는 중 문제가 발생했어요: {e}")
-            if (
-                st.session_state.cardnews_zip
-                and st.session_state.cardnews_zip_title == st.session_state.result["title"]
-            ):
-                st.download_button(
-                    "📥 카드뉴스 PNG 다운로드 (zip)",
-                    data=st.session_state.cardnews_zip,
-                    file_name=f"{_safe_filename(st.session_state.result['title'])}_카드뉴스.zip",
-                    mime="application/zip",
-                )
-
-        if report_pdf is not None:
-            st.divider()
-            st.markdown("**📄 분석지 PDF로 받기**")
-            st.caption("A4 크기로 정리해드려요 — 인쇄하거나 보관하기 좋아요.")
-            if st.button("PDF 만들기"):
-                with st.spinner("PDF를 만드는 중이에요..."):
-                    try:
-                        st.session_state.report_pdf_bytes = build_report_pdf_bytes(st.session_state.result)
-                        st.session_state.report_pdf_title = st.session_state.result["title"]
-                    except Exception as e:  # noqa: BLE001
-                        st.error(f"PDF를 만드는 중 문제가 발생했어요: {e}")
-            if (
-                st.session_state.report_pdf_bytes
-                and st.session_state.report_pdf_title == st.session_state.result["title"]
-            ):
-                st.download_button(
-                    "📥 PDF 다운로드",
-                    data=st.session_state.report_pdf_bytes,
-                    file_name=f"{_safe_filename(st.session_state.result['title'])}_분석지.pdf",
-                    mime="application/pdf",
-                )
+            share_col1, share_col2 = st.columns(2)
+            if cardnews is not None:
+                with share_col1:
+                    st.markdown("**🎨 카드뉴스로 공유하기**")
+                    st.caption("인스타그램 캐러셀 형태(1080x1350) PNG 세트를 만들어드려요.")
+                    if st.button("카드뉴스 만들기"):
+                        with st.spinner("카드뉴스를 그리는 중이에요..."):
+                            try:
+                                st.session_state.cardnews_zip = build_cardnews_zip(st.session_state.result)
+                                st.session_state.cardnews_zip_title = st.session_state.result["title"]
+                            except Exception as e:  # noqa: BLE001
+                                st.error(f"카드뉴스를 만드는 중 문제가 발생했어요: {e}")
+                    if (
+                        st.session_state.cardnews_zip
+                        and st.session_state.cardnews_zip_title == st.session_state.result["title"]
+                    ):
+                        st.download_button(
+                            "📥 카드뉴스 PNG 다운로드 (zip)",
+                            data=st.session_state.cardnews_zip,
+                            file_name=f"{_safe_filename(st.session_state.result['title'])}_카드뉴스.zip",
+                            mime="application/zip",
+                        )
+            if report_pdf is not None:
+                with share_col2:
+                    st.markdown("**📄 분석지 PDF로 받기**")
+                    st.caption("A4 크기로 정리해드려요 — 인쇄하거나 보관하기 좋아요.")
+                    if st.button("PDF 만들기"):
+                        with st.spinner("PDF를 만드는 중이에요..."):
+                            try:
+                                st.session_state.report_pdf_bytes = build_report_pdf_bytes(st.session_state.result)
+                                st.session_state.report_pdf_title = st.session_state.result["title"]
+                            except Exception as e:  # noqa: BLE001
+                                st.error(f"PDF를 만드는 중 문제가 발생했어요: {e}")
+                    if (
+                        st.session_state.report_pdf_bytes
+                        and st.session_state.report_pdf_title == st.session_state.result["title"]
+                    ):
+                        st.download_button(
+                            "📥 PDF 다운로드",
+                            data=st.session_state.report_pdf_bytes,
+                            file_name=f"{_safe_filename(st.session_state.result['title'])}_분석지.pdf",
+                            mime="application/pdf",
+                        )
 
         st.divider()
         st.markdown("**🙋 더 궁금한 점 있어요?**")
