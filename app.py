@@ -217,6 +217,13 @@ if "result" not in st.session_state:
     st.session_state.cardnews_zip_title = None
     st.session_state.report_pdf_bytes = None
     st.session_state.report_pdf_title = None
+if "viewed_article" not in st.session_state:
+    # 최근 기록/흘러온 이야기에서 예전 기사를 눌렀을 때 Notion으로 안 나가고
+    # 이 페이지 안에서 바로 보여주기 위한 상태 — 방금 분석한 st.session_state.result와
+    # 완전히 별도로 관리한다(하나 보다가 새로 분석해도 서로 안 지워지게).
+    st.session_state.viewed_article = None
+    st.session_state.viewed_article_id = None
+    st.session_state.viewed_article_error = None
 if "dup_warning_url" not in st.session_state:
     # 같은 기사를 실수로 두 번 분석하면 돈도 두 번 나가고 Notion에 중복 페이지가 쌓인다.
     # 그래서 "분석 시작"을 누르면 먼저 이미 저장된 기사인지 확인하고, 맞으면 여기에
@@ -232,6 +239,32 @@ def _cached_recent_pages(limit: int) -> list[dict]:
     네트워크 왕복이 생겨서 버튼 반응이 느려진다.
     """
     return list_recent_pages(st.secrets["NOTION_TOKEN"], st.secrets["NOTION_DATA_SOURCE_ID"], limit=limit)
+
+
+def _load_viewed_article(page_id: str) -> None:
+    """최근 기록/흘러온 이야기에서 기사를 누르면, Notion으로 나가지 않고 이 페이지
+    안에서 바로 볼 수 있게 내용을 불러온다.
+
+    Notion 링크를 새 탭으로 여는 대신 이렇게 만든 이유: Notion은 로그인이 필요해서
+    화면 안에서 바로 카드뉴스/PDF 내보내기를 테스트해볼 수가 없었다 — 여기서
+    불러오면 render_result()로 그대로 보여주고, 그 밑에 카드뉴스·PDF 버튼도 같이
+    띄울 수 있다. 실제 파싱은 cardnews.fetch_notion_article()에 이미 있던 걸
+    그대로 재사용한다(카드뉴스용으로 Notion 페이지를 읽어와 원래 dict 구조로
+    복원하는 함수라 여기 쓰임과 정확히 맞는다).
+    """
+    if cardnews is None:
+        st.session_state.viewed_article = None
+        st.session_state.viewed_article_error = "이 서버에서 기사 내용을 불러오는 기능을 지금 쓸 수 없어요."
+        return
+    try:
+        data = cardnews.fetch_notion_article(page_id, st.secrets["NOTION_TOKEN"])
+    except Exception as e:  # noqa: BLE001
+        st.session_state.viewed_article = None
+        st.session_state.viewed_article_error = f"기사를 불러오지 못했어요: {e}"
+    else:
+        st.session_state.viewed_article = data
+        st.session_state.viewed_article_id = page_id
+        st.session_state.viewed_article_error = None
 
 
 def render_story_timeline_carousel() -> None:
@@ -293,11 +326,12 @@ def render_story_timeline_carousel() -> None:
                 st.session_state.story_timeline_idx = (idx + 1) % len(thread_names)
                 st.rerun()
         for article in articles:
-            st.markdown(
-                f"<span style='color:gray; font-size:0.85em'>{article['date'] or ''}</span> · "
-                f"[{article['title']}]({article['url']})",
-                unsafe_allow_html=True,
-            )
+            date_col, title_col = st.columns([2, 8])
+            with date_col:
+                st.caption(article["date"] or "")
+            with title_col:
+                if st.button(article["title"], key=f"timeline_view_{article['id']}", use_container_width=True):
+                    _load_viewed_article(article["id"])
 
 
 render_story_timeline_carousel()
@@ -311,7 +345,8 @@ with st.expander("📚 최근 기록"):
         if not recent:
             st.caption("아직 저장된 기록이 없어요.")
         for page in recent:
-            st.markdown(f"- [{page['title']}]({page['url']}) · {page['category']}")
+            if st.button(f"{page['title']} · {page['category']}", key=f"recent_view_{page['id']}"):
+                _load_viewed_article(page["id"])
 
 with st.container(border=True, key="kd-input-box"):
     # Streamlit은 위젯이 이미 그려진 뒤에는 그 위젯의 session_state를 직접 바꿀 수 없다.
@@ -490,6 +525,59 @@ def render_result(data: dict, key_prefix: str = "") -> None:
     for ref in data["references"]:
         title = f"[{_md_safe(ref['title'])}]({ref['url']})" if ref["url"] else _md_safe(ref["title"])
         st.markdown(f"- {ref['source']} · {title}")
+
+
+def render_share_buttons(data: dict, key_prefix: str) -> None:
+    """카드뉴스 PNG · 분석지 PDF 만들기 버튼을 나란히 보여준다.
+
+    key_prefix로 session_state 키를 구분해서, "방금 분석한 결과"와 "최근 기록에서
+    불러와 훑어보는 옛날 기사"가 서로 다른 zip/PDF 캐시를 쓰게 한다 — 하나
+    만들었다고 다른 쪽 캐시가 지워지거나 섞이면 안 되기 때문이다.
+    """
+    if cardnews is None and report_pdf is None:
+        return
+    st.divider()
+    zip_key, zip_title_key = f"{key_prefix}cardnews_zip", f"{key_prefix}cardnews_zip_title"
+    pdf_key, pdf_title_key = f"{key_prefix}report_pdf_bytes", f"{key_prefix}report_pdf_title"
+    share_col1, share_col2 = st.columns(2)
+    if cardnews is not None:
+        with share_col1:
+            st.markdown("**🎨 카드뉴스로 공유하기**")
+            st.caption("인스타그램 캐러셀 형태(1080x1350) PNG 세트를 만들어드려요.")
+            if st.button("카드뉴스 만들기", key=f"{key_prefix}make_cardnews"):
+                with st.spinner("카드뉴스를 그리는 중이에요..."):
+                    try:
+                        st.session_state[zip_key] = build_cardnews_zip(data)
+                        st.session_state[zip_title_key] = data["title"]
+                    except Exception as e:  # noqa: BLE001
+                        st.error(f"카드뉴스를 만드는 중 문제가 발생했어요: {e}")
+            if st.session_state.get(zip_key) and st.session_state.get(zip_title_key) == data["title"]:
+                st.download_button(
+                    "📥 카드뉴스 PNG 다운로드 (zip)",
+                    data=st.session_state[zip_key],
+                    file_name=f"{_safe_filename(data['title'])}_카드뉴스.zip",
+                    mime="application/zip",
+                    key=f"{key_prefix}dl_cardnews",
+                )
+    if report_pdf is not None:
+        with share_col2:
+            st.markdown("**📄 분석지 PDF로 받기**")
+            st.caption("A4 크기로 정리해드려요 — 인쇄하거나 보관하기 좋아요.")
+            if st.button("PDF 만들기", key=f"{key_prefix}make_pdf"):
+                with st.spinner("PDF를 만드는 중이에요..."):
+                    try:
+                        st.session_state[pdf_key] = build_report_pdf_bytes(data)
+                        st.session_state[pdf_title_key] = data["title"]
+                    except Exception as e:  # noqa: BLE001
+                        st.error(f"PDF를 만드는 중 문제가 발생했어요: {e}")
+            if st.session_state.get(pdf_key) and st.session_state.get(pdf_title_key) == data["title"]:
+                st.download_button(
+                    "📥 PDF 다운로드",
+                    data=st.session_state[pdf_key],
+                    file_name=f"{_safe_filename(data['title'])}_분석지.pdf",
+                    mime="application/pdf",
+                    key=f"{key_prefix}dl_pdf",
+                )
 
 
 def save_to_notion(result: dict):
@@ -733,6 +821,23 @@ if st.session_state.dup_warning_url:
     if st.button("그래도 다시 분석하기"):
         perform_analysis()
 
+if st.session_state.viewed_article_error:
+    st.error(st.session_state.viewed_article_error)
+
+if st.session_state.viewed_article:
+    st.write("")
+    with st.container(border=True, key="kd-viewed-box"):
+        top_l, top_r = st.columns([8, 2])
+        with top_l:
+            st.caption("📚 최근 기록에서 불러온 기사예요 — Notion 원본과 같은 내용이에요.")
+        with top_r:
+            if st.button("닫기", key="close_viewed_article"):
+                st.session_state.viewed_article = None
+                st.session_state.viewed_article_id = None
+                st.rerun()
+        render_result(st.session_state.viewed_article, key_prefix="viewed_")
+        render_share_buttons(st.session_state.viewed_article, key_prefix="viewed_")
+
 if st.session_state.result:
     st.write("")
     with st.container(border=True, key="kd-result-box"):
@@ -751,54 +856,8 @@ if st.session_state.result:
         render_result(st.session_state.result)
 
         # 카드뉴스(화면 공유용 PNG)와 분석지 PDF(보관·인쇄용) — 둘 다 로컬 렌더링이라
-        # 나란히 놓아도 API 비용이 늘지 않는다. 둘 중 하나만 서버에서 쓸 수 있는
-        # 상황(폰트 로딩 실패 등)이어도 그 칸만 비고 나머지는 그대로 동작해야 해서,
-        # 컬럼 자체는 항상 만들고 안쪽 내용만 조건부로 채운다.
-        if cardnews is not None or report_pdf is not None:
-            st.divider()
-            share_col1, share_col2 = st.columns(2)
-            if cardnews is not None:
-                with share_col1:
-                    st.markdown("**🎨 카드뉴스로 공유하기**")
-                    st.caption("인스타그램 캐러셀 형태(1080x1350) PNG 세트를 만들어드려요.")
-                    if st.button("카드뉴스 만들기"):
-                        with st.spinner("카드뉴스를 그리는 중이에요..."):
-                            try:
-                                st.session_state.cardnews_zip = build_cardnews_zip(st.session_state.result)
-                                st.session_state.cardnews_zip_title = st.session_state.result["title"]
-                            except Exception as e:  # noqa: BLE001
-                                st.error(f"카드뉴스를 만드는 중 문제가 발생했어요: {e}")
-                    if (
-                        st.session_state.cardnews_zip
-                        and st.session_state.cardnews_zip_title == st.session_state.result["title"]
-                    ):
-                        st.download_button(
-                            "📥 카드뉴스 PNG 다운로드 (zip)",
-                            data=st.session_state.cardnews_zip,
-                            file_name=f"{_safe_filename(st.session_state.result['title'])}_카드뉴스.zip",
-                            mime="application/zip",
-                        )
-            if report_pdf is not None:
-                with share_col2:
-                    st.markdown("**📄 분석지 PDF로 받기**")
-                    st.caption("A4 크기로 정리해드려요 — 인쇄하거나 보관하기 좋아요.")
-                    if st.button("PDF 만들기"):
-                        with st.spinner("PDF를 만드는 중이에요..."):
-                            try:
-                                st.session_state.report_pdf_bytes = build_report_pdf_bytes(st.session_state.result)
-                                st.session_state.report_pdf_title = st.session_state.result["title"]
-                            except Exception as e:  # noqa: BLE001
-                                st.error(f"PDF를 만드는 중 문제가 발생했어요: {e}")
-                    if (
-                        st.session_state.report_pdf_bytes
-                        and st.session_state.report_pdf_title == st.session_state.result["title"]
-                    ):
-                        st.download_button(
-                            "📥 PDF 다운로드",
-                            data=st.session_state.report_pdf_bytes,
-                            file_name=f"{_safe_filename(st.session_state.result['title'])}_분석지.pdf",
-                            mime="application/pdf",
-                        )
+        # 나란히 놓아도 API 비용이 늘지 않는다.
+        render_share_buttons(st.session_state.result, key_prefix="")
 
         st.divider()
         st.markdown("**🙋 더 궁금한 점 있어요?**")

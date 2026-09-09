@@ -260,6 +260,32 @@ def draw_lines(draw, xy, lines, f, fill, line_height) -> int:
     return y
 
 
+_BOLD_LINE_RE = re.compile(r"^\*\*(.+)\*\*$")
+
+
+def split_explanation(explanation: str) -> list[tuple[str | None, str]]:
+    """analysis_pipeline._write()가 문단을 합칠 때 쓰는 "**소제목**\\n본문"(문단 사이는
+    빈 줄) 형식을 (소제목 또는 None, 본문) 쌍의 리스트로 되돌린다.
+
+    이 변환이 필요한 이유: Streamlit(st.write)과 Notion은 "**text**"를 마크다운/리치
+    텍스트 굵게로 알아서 해석해주지만, 카드뉴스(Pillow)와 PDF(fpdf2)는 그냥 글자를
+    그리는 도구라 마크다운을 모른다 — 그래서 소제목을 실제로 굵게 그리려면 여기서
+    직접 "**"를 떼어내고 소제목/본문을 구분해줘야 한다. 안 그러면 카드에 별표가
+    글자 그대로 찍혀 나온다(실제로 재현된 문제).
+    """
+    paragraphs: list[tuple[str | None, str]] = []
+    for block in explanation.split("\n\n"):
+        if not block:
+            continue
+        first_line, _, rest = block.partition("\n")
+        m = _BOLD_LINE_RE.match(first_line.strip())
+        if m:
+            paragraphs.append((m.group(1), rest))
+        else:
+            paragraphs.append((None, block))
+    return paragraphs
+
+
 def new_card(img_base: Image.Image | None = None) -> tuple[Image.Image, ImageDraw.ImageDraw, tuple[int, int, int, int]]:
     """배경 + 그림자 + 흰 카드 프레임을 그리고, 카드 안쪽 콘텐츠 영역 좌표를 돌려준다."""
     img = Image.new("RGBA", (W, H), hex_to_rgb(BG) + (255,))
@@ -405,16 +431,42 @@ def draw_axis(axis: dict, page_no: int, total: int) -> Image.Image:
     y = draw_lines(d, (left, y), title_lines, title_f, hex_to_rgb(INK), title_lh)
     y += 28
 
+    # explanation은 "**소제목**\n본문"이 문단(빈 줄로 구분)마다 반복되는 형식이다.
+    # 소제목을 실제로 굵게 그리려면 fit_block에 통째로 넘기면 안 되고(별표가 그대로
+    # 찍혀 나온다 — 실제로 재현된 문제) 문단 단위로 나눠서 그려야 한다. 다만 카드
+    # 안에 다 들어갈 폰트 크기를 정하는 건 여전히 fit_block의 "안 들어가면 줄인다"
+    # 로직을 그대로 재사용한다 — 별표만 뗀 평문으로 한 번 재보고 그 크기를 쓴다.
+    paragraphs = split_explanation(axis.get("explanation", ""))
     body_max_h = bottom - footer_zone - y - 20
-    body_f, body_lines, body_lh = fit_block(d, axis.get("explanation", ""), max_w, max(body_max_h, 120), 34, 22, line_height_ratio=1.65)
-    y = draw_lines(d, (left, y), body_lines, body_f, hex_to_rgb(INK), body_lh)
+    plain_for_sizing = "\n\n".join(f"{h}\n{b}" if h else b for h, b in paragraphs)
+    body_f, _, body_lh = fit_block(d, plain_for_sizing, max_w, max(body_max_h, 120), 34, 22, line_height_ratio=1.65)
+    bold_body_f = font(body_f.size, bold=True)
+    # min_size(22px)까지 줄여도 유난히 긴 축(문단이 3개 이상 등)은 여전히 안 들어갈 수
+    # 있다 — 그렇다고 계속 그리면 맨 아래 로고·페이지 번호(footer)를 덮어써서 페이지
+    # 번호를 못 읽는 등 더 심각하게 깨진다(실제로 재현됨). 그래서 footer 바로 위
+    # (safe_bottom)까지만 그리고, 그 아래로 넘어갈 문단은 통째로 생략한다 — 카드 하나
+    # 분량을 넘는 긴 내용은 잘리는 게, footer가 깨지는 것보다 낫다.
+    safe_bottom = bottom - 90
+    for heading, body in paragraphs:
+        if y >= safe_bottom:
+            break
+        if heading:
+            y = draw_lines(d, (left, y), wrap_text(d, heading, bold_body_f, max_w), bold_body_f, hex_to_rgb(INK), body_lh)
+        if body and y < safe_bottom:
+            lines = wrap_text(d, body, body_f, max_w)
+            max_lines = max(1, (safe_bottom - y) // body_lh)
+            y = draw_lines(d, (left, y), lines[:max_lines], body_f, hex_to_rgb(INK), body_lh)
 
     if axis.get("confidence") == "low":
         y += 12
         d.text((left, y), "확실하지 않음 — 확인 필요", font=font(22, bold=False), fill=hex_to_rgb(INK_FAINT))
 
-    if talk_line:
-        box_top = bottom - 150
+    # 본문이 유난히 길어서 min_size로도 다 못 줄이면(fit_block 자체가 "잘리는 것보다는
+    # 낫다"며 넘치더라도 그리는 정책이라 실제로 생김) 말풍선 박스를 그 위에 겹쳐
+    # 그리면 글자가 뒤섞여 보인다 — 박스를 그릴 자리에 이미 본문이 침범했으면
+    # 아예 생략한다(말할 거리 하나 없는 카드가, 겹쳐서 깨진 카드보다 낫다).
+    box_top = bottom - 150
+    if talk_line and y <= box_top:
         d.rounded_rectangle([left, box_top, right, bottom - 62], radius=20, fill=hex_to_rgb("#eef2fa") + (255,))
         tx = left + 36
         if EMOJI_PATH:
@@ -498,7 +550,9 @@ def render_cardnews(data: dict, out_dir: str | Path) -> list[Path]:
 # Notion에서 실제 저장된 기사 불러오기 (notion_client.py의 저장 로직을 거꾸로 읽는다)
 # ============================================================
 
-_BOLD_LINE_RE = re.compile(r"^\*\*(.+)\*\*$")
+# notion_client._axis_callout이 붙이는 "\n\n💬 <talk_line>" 마커를 이어붙인 explanation
+# 문자열 끝에서 찾아낸다. DOTALL로 <talk_line> 안의 개행(사실상 없지만 방어적으로)도 포함.
+_TALK_LINE_SUFFIX_RE = re.compile("\n\n\U0001F4AC (.+)$", re.DOTALL)
 
 
 def _extract_page_id(page_id_or_url: str) -> str:
@@ -561,29 +615,44 @@ def _parse_callout_to_axis(block: dict) -> dict:
     title = label[len(sensitive_prefix):] if sensitive else label
 
     body_runs = runs[1:]
-    # 뒤에서부터 talk_line, 저확신 표시를 떼어낸다 (notion_client._axis_callout이 이 순서로 붙였다)
-    talk_line = None
-    if body_runs and body_runs[-1].get("plain_text", "").startswith("\n\n\U0001f4ac "):
-        talk_line = body_runs[-1]["plain_text"][len("\n\n\U0001f4ac ") :]
-        body_runs = body_runs[:-1]
-
-    confidence = "high"
-    if body_runs and body_runs[-1].get("plain_text", "") == "\n(확실하지 않음 — 확인 필요)":
-        confidence = "low"
-        body_runs = body_runs[:-1]
-
     explanation_parts = []
     for run in body_runs:
         text = run.get("plain_text", "")
         bold = bool(run.get("annotations", {}).get("bold"))
-        stripped = text.rstrip("\n")
+        # _explanation_to_rich_text가 줄마다 run 하나에 "\n" 딱 하나씩만 붙여서 썼으므로,
+        # 읽어올 때도 그 하나만 떼어내야 한다. rstrip("\n")으로 몽땅 떼면 문제가 생긴다 —
+        # Notion이 서식이 같은 인접 run들(예: 문단 끝 + 그다음 빈 줄)을 하나로 합쳐서
+        # 돌려주는 경우, 합쳐진 run은 "...문장\n\n"처럼 개행이 2개 남아있는데 그걸 다
+        # 떼면 문단 사이 빈 줄이 통째로 사라진다(실제로 재현됨 — 소제목이 다음 문단이
+        # 아니라 바로 앞 문장에 붙어버려서 split_explanation이 문단 경계를 못 찾았다).
+        stripped = text[:-1] if text.endswith("\n") else text
         if bold and stripped:
             explanation_parts.append(f"**{stripped}**")
         else:
             explanation_parts.append(stripped)
     # 원본 encoding 쪽(_explanation_to_rich_text)이 줄마다 run을 하나씩 만들었으므로
     # (빈 줄도 포함해서) 여기서도 필터링 없이 그대로 이어 붙여야 원문과 정확히 일치한다.
-    explanation = "\n".join(explanation_parts)
+    combined = "\n".join(explanation_parts)
+
+    # talk_line·저확신 표시는 notion_client._axis_callout이 본문 맨 끝에 별도 run으로
+    # 붙인 것이지만, Notion API는 서식(굵기 등)이 같은 인접 run들을 하나로 합쳐서
+    # 돌려주는 경우가 있다 — 그러면 talk_line 마커("\n\n💬 ")가 바로 앞 문단 run에
+    # 붙어버려서 "마지막 run 하나만 본다"는 가정이 깨진다(실제 저장된 기사에서
+    # 재현: 이 경우 talk_line이 전부 None으로 나오고, 본문 끝에 "💬 ..."가 그대로
+    # 새어 나왔다). 그래서 run 단위가 아니라, 다 이어붙인 전체 문자열 끝에서
+    # 정규식으로 떼어내는 방식으로 바꿨다 — run이 합쳐졌든 안 합쳐졌든 상관없다.
+    talk_line = None
+    match = _TALK_LINE_SUFFIX_RE.search(combined)
+    if match:
+        talk_line = match.group(1)
+        combined = combined[: match.start()]
+
+    confidence = "high"
+    if combined.endswith("\n(확실하지 않음 — 확인 필요)"):
+        confidence = "low"
+        combined = combined[: -len("\n(확실하지 않음 — 확인 필요)")]
+
+    explanation = combined
 
     return {
         "family": family,

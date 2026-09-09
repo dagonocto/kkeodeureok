@@ -21,9 +21,33 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 from fpdf import FPDF
+
+_BOLD_LINE_RE = re.compile(r"^\*\*(.+)\*\*$")
+
+
+def split_explanation(explanation: str) -> list[tuple[str | None, str]]:
+    """analysis_pipeline._write()가 만드는 "**소제목**\\n본문"(문단 사이는 빈 줄) 형식을
+    (소제목 또는 None, 본문) 쌍의 리스트로 되돌린다.
+
+    fpdf2는 마크다운을 모르는 텍스트 드로잉 도구라, 그대로 넘기면 소제목에 별표가
+    글자 그대로 찍힌다(cardnews.py에도 똑같은 이유로 있는 동일한 함수 — 두 모듈이
+    서로 의존하지 않고 각자 독립적으로 동작하게 하려고 일부러 각자 갖고 있다).
+    """
+    paragraphs: list[tuple[str | None, str]] = []
+    for block in explanation.split("\n\n"):
+        if not block:
+            continue
+        first_line, _, rest = block.partition("\n")
+        m = _BOLD_LINE_RE.match(first_line.strip())
+        if m:
+            paragraphs.append((m.group(1), rest))
+        else:
+            paragraphs.append((None, block))
+    return paragraphs
 
 _ASSET_FONT_DIR = Path(__file__).resolve().parent / "assets" / "fonts"
 FONT_REGULAR = str(_ASSET_FONT_DIR / "Pretendard-Regular.otf")
@@ -110,9 +134,17 @@ def _axis_section(pdf: FPDF, axis: dict) -> None:
     pdf.multi_cell(0, 7.5, title, new_x="LMARGIN", new_y="NEXT", align="L")
     pdf.ln(1)
 
-    pdf.set_font("Pretendard", "", 10.5)
+    # explanation은 "**소제목**\n본문"이 문단(빈 줄로 구분)마다 반복되는 형식이라,
+    # 그대로 넘기면 소제목에 별표가 글자 그대로 찍힌다 — 문단 단위로 나눠서
+    # 소제목만 굵게 그린다.
     pdf.set_text_color(*INK)
-    pdf.multi_cell(0, 6.3, axis.get("explanation", ""), new_x="LMARGIN", new_y="NEXT", align="L")
+    for heading, body in split_explanation(axis.get("explanation", "")):
+        if heading:
+            pdf.set_font("Pretendard", "B", 10.5)
+            pdf.multi_cell(0, 6.3, heading, new_x="LMARGIN", new_y="NEXT", align="L")
+        if body:
+            pdf.set_font("Pretendard", "", 10.5)
+            pdf.multi_cell(0, 6.3, body, new_x="LMARGIN", new_y="NEXT", align="L")
 
     if axis.get("confidence") == "low":
         pdf.ln(1)
