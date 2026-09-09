@@ -28,7 +28,7 @@ import glossary
 import story_thread
 from feedback import save_feedback_note
 from fetch_article import fetch_article
-from notion_client import append_axis_block, create_notion_page, list_recent_pages
+from notion_client import append_axis_block, create_notion_page, list_recent_pages, list_recent_pages_page
 from prompts import FOLLOWUP_SCHEMA, FOLLOWUP_SYSTEM_PROMPT
 from text_cleanup import strip_trailing_artifacts
 from usage_log import log_usage
@@ -337,16 +337,57 @@ def render_story_timeline_carousel() -> None:
 render_story_timeline_carousel()
 
 with st.expander("📚 최근 기록"):
-    try:
-        recent = list_recent_pages(st.secrets["NOTION_TOKEN"], st.secrets["NOTION_DATA_SOURCE_ID"], limit=10)
-    except Exception as e:  # noqa: BLE001
-        st.caption(f"기록을 불러오지 못했어요: {e}")
+    # 예전에는 limit=10으로 딱 10개만 보여주고 끝이라 "전체 기록"을 볼 방법이 없었다.
+    # 그렇다고 한 번에 다 긁어오면(기록이 몇백 개로 늘어날 걸 생각하면) 매번 느려지고
+    # Notion 쪽 상한(한 번 호출에 최대 100개)에도 걸리니, "더 보기" 버튼으로 필요한
+    # 만큼만 이어서 불러오는 방식으로 바꿨다 — session_state에 지금까지 불러온 목록과
+    # 다음 페이지를 가리키는 커서를 들고 있다가, 버튼 누를 때마다 이어붙인다.
+    if "recent_pages" not in st.session_state:
+        st.session_state.recent_pages = []
+        st.session_state.recent_pages_cursor = None
+        st.session_state.recent_pages_has_more = True
+        st.session_state.recent_pages_error = None
+
+    if not st.session_state.recent_pages and st.session_state.recent_pages_has_more:
+        try:
+            result = list_recent_pages_page(
+                st.secrets["NOTION_TOKEN"], st.secrets["NOTION_DATA_SOURCE_ID"], page_size=20
+            )
+        except Exception as e:  # noqa: BLE001
+            st.session_state.recent_pages_error = str(e)
+            st.session_state.recent_pages_has_more = False
+        else:
+            st.session_state.recent_pages = result["pages"]
+            st.session_state.recent_pages_cursor = result["next_cursor"]
+            st.session_state.recent_pages_has_more = result["has_more"]
+
+    if st.session_state.recent_pages_error:
+        st.caption(f"기록을 불러오지 못했어요: {st.session_state.recent_pages_error}")
+    elif not st.session_state.recent_pages:
+        st.caption("아직 저장된 기록이 없어요.")
     else:
-        if not recent:
-            st.caption("아직 저장된 기록이 없어요.")
-        for page in recent:
+        for page in st.session_state.recent_pages:
             if st.button(f"{page['title']} · {page['category']}", key=f"recent_view_{page['id']}"):
                 _load_viewed_article(page["id"])
+
+        if st.session_state.recent_pages_has_more:
+            if st.button("더 보기", key="recent_pages_load_more"):
+                try:
+                    result = list_recent_pages_page(
+                        st.secrets["NOTION_TOKEN"],
+                        st.secrets["NOTION_DATA_SOURCE_ID"],
+                        page_size=20,
+                        start_cursor=st.session_state.recent_pages_cursor,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    st.error(f"더 불러오지 못했어요: {e}")
+                else:
+                    st.session_state.recent_pages += result["pages"]
+                    st.session_state.recent_pages_cursor = result["next_cursor"]
+                    st.session_state.recent_pages_has_more = result["has_more"]
+                    st.rerun()
+        else:
+            st.caption(f"전체 {len(st.session_state.recent_pages)}건 · 끝까지 다 봤어요")
 
 with st.container(border=True, key="kd-input-box"):
     # Streamlit은 위젯이 이미 그려진 뒤에는 그 위젯의 session_state를 직접 바꿀 수 없다.
@@ -608,6 +649,12 @@ def save_to_notion(result: dict):
     else:
         st.session_state.page_url = page_url
         st.session_state.page_id = page_id
+        # "최근 기록" 목록은 session_state에 캐시해두고 재사용하는데, 방금 새로 저장한
+        # 기사가 그 목록에 안 보이면 헷갈리니 캐시를 비워서 다음에 열 때 새로 불러오게 한다.
+        st.session_state.recent_pages = []
+        st.session_state.recent_pages_cursor = None
+        st.session_state.recent_pages_has_more = True
+        st.session_state.recent_pages_error = None
 
 
 def answer_followup(document_block: dict, url: str, question: str) -> tuple[dict, float]:
@@ -942,6 +989,12 @@ with st.expander("🗞 여러 기사 한번에 분석하기"):
                     entry["error"] = str(e)
                 st.session_state.batch_results.append(entry)
             overall.progress(1.0, text=f"{len(urls)}/{len(urls)} 완료!")
+            # 배치로 여러 건을 한꺼번에 저장했으니, "최근 기록" 캐시도 한 번만 비워서
+            # 다음에 열 때 방금 저장한 것들까지 다 보이게 한다.
+            st.session_state.recent_pages = []
+            st.session_state.recent_pages_cursor = None
+            st.session_state.recent_pages_has_more = True
+            st.session_state.recent_pages_error = None
 
     if st.session_state.batch_results:
         ok = sum(1 for e in st.session_state.batch_results if e["result"])

@@ -247,6 +247,57 @@ def list_recent_pages(notion_token: str, data_source_id: str, limit: int = 10) -
     return pages
 
 
+def list_recent_pages_page(
+    notion_token: str, data_source_id: str, page_size: int = 20, start_cursor: str | None = None
+) -> dict:
+    """"📚 최근 기록"처럼 "더 보기" 버튼으로 계속 불러오는 화면을 위한, 커서 기반 페이지네이션 버전.
+
+    list_recent_pages()는 한 번 호출에 최대 항목 수(Notion 쪽 상한 100개)만 가져오고 끝이라
+    "전체 기록"을 보여줄 수 없었다 — 이 함수는 Notion이 돌려주는 next_cursor를 그대로
+    돌려줘서, 호출하는 쪽(app.py)이 그걸 다시 넘기면 이어서 다음 페이지를 가져올 수 있게 한다.
+    반환값: {"pages": [...같은 형식...], "next_cursor": str | None, "has_more": bool}
+    """
+    headers = {
+        "Authorization": f"Bearer {notion_token}",
+        "Notion-Version": NOTION_VERSION,
+        "Content-Type": "application/json",
+    }
+    body = {
+        "sorts": [{"property": "날짜", "direction": "descending"}],
+        "page_size": page_size,
+    }
+    if start_cursor:
+        body["start_cursor"] = start_cursor
+    response = requests.post(_data_source_query_url(data_source_id), headers=headers, json=body, timeout=30)
+    response.raise_for_status()
+    result = response.json()
+
+    pages = []
+    for page in result["results"]:
+        props = page["properties"]
+        title_runs = props.get("제목", {}).get("title", [])
+        title = title_runs[0]["plain_text"] if title_runs else "(제목 없음)"
+        category = (props.get("분야", {}).get("select") or {}).get("name", "")
+        source_url = (props.get("출처 URL") or {}).get("url")
+        thread_runs = (props.get("연관 시리즈") or {}).get("rich_text", [])
+        thread = thread_runs[0]["plain_text"] if thread_runs else None
+        date_info = (props.get("날짜") or {}).get("date") or {}
+        pages.append({
+            "id": page["id"],
+            "title": title,
+            "category": category,
+            "url": page["url"],
+            "source_url": source_url,
+            "date": date_info.get("start"),
+            "thread": thread or None,
+        })
+    return {
+        "pages": pages,
+        "next_cursor": result.get("next_cursor"),
+        "has_more": bool(result.get("has_more")),
+    }
+
+
 def set_thread_name(page_id: str, thread_name: str, notion_token: str) -> None:
     """이미 저장된 페이지에 "연관 시리즈" 이름을 소급해서 붙인다(속성만 갱신, 본문은 그대로).
 
