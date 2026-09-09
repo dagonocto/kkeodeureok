@@ -34,8 +34,10 @@ REQUEST_TIMEOUT_SECONDS = 120
 # medium과 high는 둘 다 최대 15단계 다단계 브라우징을 하지만, high는 더 비싼 모델(GPT-5.6-Sol)을
 # 써서 복잡한 질문에서 비용이 예측 불가능하게 튄다 — 실측 결과 같은 질문에 high는 $0.25,
 # medium은 $0.01174로 22배 차이가 났는데 인용 품질(실제 출처 URL 개수·정확도)은 거의 같았다.
-# 그래서 비용 예측 가능성을 위해 medium을 기본값으로 쓴다.
-DEFAULT_PRESET = "medium"
+# fast/low/medium은 셋 다 같은(싼) 모델(GPT-5.6-Luna)을 쓰고, 차이는 다단계 브라우징
+# 단계 수(low는 medium보다 얕게 조사)다 — 2026-09-09, 유지비용을 더 낮추려고 medium
+# 대신 low로 내려봄. 인용 품질이 눈에 띄게 떨어지면(출처 개수·정확도) medium으로 되돌릴 것.
+DEFAULT_PRESET = "low"
 
 # 응답에 usage.cost가 안 실려오는 경우를 대비한 대략적인 폴백 비용(달러/호출, 2026-08 기준
 # 공식 가격 예시 페이지 기준 — 정확한 값은 항상 usage.cost를 우선 사용한다).
