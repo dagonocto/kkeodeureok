@@ -685,7 +685,12 @@ def answer_followup(document_block: dict, url: str, question: str) -> tuple[dict
 
     search_calls = sum(1 for item in response.output if item.type == "web_search_call")
     cost = log_usage(response.usage.input_tokens, response.usage.output_tokens, search_calls, stage="followup")
-    return strip_trailing_artifacts(json.loads(response.output_text)), cost
+    axis = strip_trailing_artifacts(json.loads(response.output_text))
+    # 지침상 "url 확인 안 되면 그 출처를 아예 빼라"고 되어 있지만, 모델이 안 지키고
+    # url:null로 남겨두는 경우가 있어서(analysis_pipeline._write()와 동일한 문제) 여기서도
+    # 코드로 한 번 더 걸러낸다 — 눌러도 안 열리는 죽은 링크가 Notion에 남지 않게 한다.
+    axis["references"] = [ref for ref in axis["references"] if ref.get("url")]
+    return axis, cost
 
 
 def find_duplicate_page_url(target_url: str) -> str | None:

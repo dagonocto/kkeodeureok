@@ -247,6 +247,11 @@ def _write(client: OpenAI, document_block: dict, plan: dict, findings: list[dict
     # 지침상 "뺄 축은 결과 배열에 아예 포함하지 않는다"고 되어 있지만, 모델이 이걸 안 지키고
     # explanation을 빈 문자열로만 남겨두는 경우가 있어서 여기서도 한 번 더 걸러낸다.
     written["axes"] = [axis for axis in written["axes"] if axis["explanation"].strip()]
+    # 마찬가지로 "url 확인 안 되면 그 출처는 아예 빼라"는 지침도 모델이 안 지키고 url:null로
+    # 남겨두는 경우가 있었다(실제 배포 화면에서 "더 파보고 싶으면"의 한 항목만 링크가 안
+    # 걸려 있는 게 발견됨) — 눌러도 아무 데도 안 가는 죽은 항목이 화면에 남지 않도록
+    # 여기서도 코드로 한 번 더 걸러낸다.
+    written["references"] = [ref for ref in written["references"] if ref.get("url")]
     return written, cost
 
 

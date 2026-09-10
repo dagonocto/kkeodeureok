@@ -750,7 +750,11 @@ explanation과는 별개로, 축마다 talk_line을 하나씩 만든다.
 - 같은 언론사의 비슷한 후속 기사만 나열하지 않는다. 법령·통계·전문가 자료가 research_findings에
   있으면 우선 포함한다.
 - 맥락의존형 기사는 최소 2개, 정보성 기사는 0개 이상 기록한다(source: 매체명, title: 제목,
-  url: 실제 링크. 확인 안 되면 url은 null).
+  url: 실제 링크).
+- **실제 접근 가능한 URL을 확인할 수 없는 출처는 references에 아예 넣지 않는다.** url을
+  null로 채워서 항목만 만들어두지 않는다 — 화면·Notion에서는 그 항목이 "제목은 있는데
+  눌러도 아무 데도 안 가는 죽은 링크"로 보여서 독자가 혼란스러워한다. 링크를 못 정하겠으면
+  그 출처는 통째로 뺀다(개수가 줄어도 된다).
 """
 
 
@@ -840,7 +844,10 @@ WRITER_SCHEMA = {
                 "properties": {
                     "source": {"type": "string"},
                     "title": {"type": "string"},
-                    "url": {"type": ["string", "null"], "description": "출처 원문 링크 (확인 안 되면 null)"},
+                    "url": {
+                        "type": ["string", "null"],
+                        "description": "출처 원문 링크. 확인 안 되면 null이 아니라 이 출처 자체를 references 배열에서 뺀다.",
+                    },
                 },
             },
         },
@@ -963,8 +970,9 @@ FOLLOWUP_SYSTEM_PROMPT = f"""사용자가 이미 한 번 분석한 기사 원문
 - family는 질문의 성격에 가장 잘 맞는 것을 아래 7개 중에서 하나 고른다: {", ".join(AXIS_FAMILIES)}
 - 정치적으로 논쟁적인 일반화 주장을 다룰 때는 사실관계만 제시하고 sensitive: true로 표시한다.
 - web_search로 확인한 출처를 references에 최소 1개 이상 기록한다(source: 매체명, title: 제목,
-  url: 실제 접근 가능한 링크, 확인 안 되면 null). 원문 내용만으로 답할 수 있어 검색이
-  필요 없었다면 references는 빈 배열로 둔다.
+  url: 실제 접근 가능한 링크). **url을 확인 못 한 출처는 null로 채우지 말고 references에서
+  아예 뺀다** — 눌러도 안 열리는 죽은 링크가 화면에 남는 걸 방지한다. 원문 내용만으로 답할
+  수 있어 검색이 필요 없었다면 references는 빈 배열로 둔다.
 """
 
 FOLLOWUP_SCHEMA = {
@@ -990,7 +998,10 @@ FOLLOWUP_SCHEMA = {
                 "properties": {
                     "source": {"type": "string"},
                     "title": {"type": "string"},
-                    "url": {"type": ["string", "null"], "description": "출처 원문 링크 (확인 안 되면 null)"},
+                    "url": {
+                        "type": ["string", "null"],
+                        "description": "출처 원문 링크. 확인 안 되면 null이 아니라 이 출처 자체를 references 배열에서 뺀다.",
+                    },
                 },
             },
         },
