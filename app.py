@@ -23,15 +23,33 @@ import streamlit as st
 import streamlit.components.v1 as components
 from openai import OpenAI
 
-import analysis_pipeline
 import glossary
 import story_thread
 from feedback import save_feedback_note
 from fetch_article import fetch_article
 from notion_client import append_axis_block, create_notion_page, list_recent_pages, list_recent_pages_page
-from prompts import FOLLOWUP_SCHEMA, FOLLOWUP_SYSTEM_PROMPT
 from text_cleanup import strip_trailing_artifacts
 from usage_log import log_usage
+
+# prompts.py(핵심 프롬프트)는 이 저장소에 없다 — 팀원과 공유하는 저장소와 분리해서
+# 별도 private 저장소(kkeodeureok-core)에만 둔다(2026-09-12, 자세한 내용은
+# _prompts_loader.py 참고). 그래서 analysis_pipeline도 그 위에서만 동작하므로,
+# prompts를 못 구하면 기사 분석 기능 자체를 조용히 비활성화한다 — cardnews/
+# report_pdf를 optional 취급하는 것과 같은 원칙이다.
+from _prompts_loader import ensure_prompts_available
+
+if ensure_prompts_available():
+    try:
+        import analysis_pipeline
+        from prompts import FOLLOWUP_SCHEMA, FOLLOWUP_SYSTEM_PROMPT
+    except Exception:  # noqa: BLE001 - 분석 기능만 비활성화하고 앱은 계속 뜨게 한다
+        analysis_pipeline = None
+        FOLLOWUP_SCHEMA = None
+        FOLLOWUP_SYSTEM_PROMPT = None
+else:
+    analysis_pipeline = None
+    FOLLOWUP_SCHEMA = None
+    FOLLOWUP_SYSTEM_PROMPT = None
 
 # cardnews는 카드뉴스 PNG를 그릴 한글 폰트를 파일을 불러오는 순간(import 시점) 바로
 # 찾는다 — 이 서버(리눅스)에 packages.txt로 설치한 폰트가 어떤 이유로든 없거나 깨지면
@@ -390,6 +408,11 @@ with st.expander("📚 최근 기록"):
             st.caption(f"전체 {len(st.session_state.recent_pages)}건 · 끝까지 다 봤어요")
 
 with st.container(border=True, key="kd-input-box"):
+    if analysis_pipeline is None:
+        st.info(
+            "이 환경에서는 기사 분석 기능을 쓸 수 없어요 — 핵심 로직이 비공개 저장소에만 있어요. "
+            "카드뉴스·PDF·최근 기록 보기 등 나머지 기능은 그대로 써보실 수 있어요."
+        )
     # Streamlit은 위젯이 이미 그려진 뒤에는 그 위젯의 session_state를 직접 바꿀 수 없다.
     # 그래서 "지금 비워라" 표시만 미리 남겨두고, 위젯을 그리기 *전에* 그 표시를 보고
     # 비운 다음 표시를 내린다 — 다음 실행(rerun)에서만 적용되는 방식이다.
@@ -435,6 +458,8 @@ def build_document_block(file) -> dict:
 def analyze_article(document_block: dict, url: str, on_stage: callable = None) -> tuple[dict, float]:
     """기사 분석 파이프라인(기획→조사→작성)을 실행한다. 실제 로직은 analysis_pipeline.py에 있다 —
     app.py(Streamlit)와 regression_test.py 양쪽에서 로직이 갈라지지 않도록 하기 위해서다."""
+    if analysis_pipeline is None:
+        raise RuntimeError("이 서버에서는 기사 분석 기능을 쓸 수 없어요 (핵심 로직이 비공개 저장소에만 있음)")
     return analysis_pipeline.analyze_article(
         document_block,
         url,
@@ -659,6 +684,8 @@ def save_to_notion(result: dict):
 
 def answer_followup(document_block: dict, url: str, question: str) -> tuple[dict, float]:
     """이미 분석한 기사 원문을 재사용해서, 추가 질문에 답하는 축 하나만 새로 만든다."""
+    if FOLLOWUP_SYSTEM_PROMPT is None:
+        raise RuntimeError("이 서버에서는 추가 질문 기능을 쓸 수 없어요 (핵심 로직이 비공개 저장소에만 있음)")
     client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
     instruction = f"추가 질문: {question}\n원문 URL: {url if url else '없음(파일로만 제공됨)'}"
 

@@ -1,5 +1,11 @@
 .streamlit/secrets.toml
 .claude/
+
+# 핵심 프롬프트 — 이 저장소는 팀원과 공유하지만, 프롬프트 자체는 비공개
+# private 저장소(kkeodeureok-core)에서만 버전관리한다(2026-09-12).
+# 실물 파일은 소유자 로컬에 그대로 남아있고, _prompts_loader.py가 그걸 쓰거나
+# (팀원 환경처럼) 없으면 기사 분석 기능만 조용히 비활성화한다.
+prompts.py
 __pycache__/
 *.pyc
 .venv/
