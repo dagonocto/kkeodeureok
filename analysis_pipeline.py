@@ -247,11 +247,11 @@ def _write(client: OpenAI, document_block: dict, plan: dict, findings: list[dict
     # 지침상 "뺄 축은 결과 배열에 아예 포함하지 않는다"고 되어 있지만, 모델이 이걸 안 지키고
     # explanation을 빈 문자열로만 남겨두는 경우가 있어서 여기서도 한 번 더 걸러낸다.
     written["axes"] = [axis for axis in written["axes"] if axis["explanation"].strip()]
-    # 마찬가지로 "url 확인 안 되면 그 출처는 아예 빼라"는 지침도 모델이 안 지키고 url:null로
-    # 남겨두는 경우가 있었다(실제 배포 화면에서 "더 파보고 싶으면"의 한 항목만 링크가 안
-    # 걸려 있는 게 발견됨) — 눌러도 아무 데도 안 가는 죽은 항목이 화면에 남지 않도록
-    # 여기서도 코드로 한 번 더 걸러낸다.
-    written["references"] = [ref for ref in written["references"] if ref.get("url")]
+    # "더 파보고 싶으면"(기사 전체 참고자료)은 예전엔 이 단계 GPT가 직접 썼는데, "url 확인
+    # 안 되면 그 출처는 아예 빼라"는 지침을 안 지키고 url:null로 남겨두는 경우가 실측으로도
+    # (2026-09-13, 저장된 457개 중 84개=18%) 확인돼서, 아예 GPT가 안 쓰게 스키마에서
+    # 빼고 analyze_article()이 findings의 실제 인용 URL로 직접 만들도록 바꿨다 — 그래서
+    # written에는 더 이상 "references" 키가 없다.
     return written, cost
 
 
@@ -343,7 +343,18 @@ def analyze_article(
         axis_out = {key: value for key, value in axis.items() if key != "coverage_question"}
         axis_out["references"] = _citations_to_references(citations)[:3]
         public_axes.append(axis_out)
-    data = {**plan, "axes": public_axes, "references": written["references"]}
+    # "더 파보고 싶으면"(기사 전체 단위 참고자료)도 예전엔 작성 단계 GPT가 자유 텍스트로
+    # 썼는데, 실제 인용 URL을 재료로 줘도 "링크 확인 안 되면 아예 빼라"는 지침을 가끔 안
+    # 지켜서 실측 결과 참고자료의 18%가 링크 없이 저장되는 문제가 있었다(2026-09-13 확인,
+    # 107건 457개 표본). 위 카드별 출처와 똑같이, 여기도 GPT를 안 믿고 코드가 Perplexity가
+    # 실제로 찾아온 인용 URL로 직접 만든다 — 그러면 구조적으로 링크 없는 참고자료가 나올 수
+    # 없다. 카드별 출처에 이미 쓰인 것과 겹치면 굳이 또 보여줄 필요 없어서 뺀다.
+    used_urls = {ref["url"] for axis in public_axes for ref in axis["references"] if ref.get("url")}
+    all_citations = [c for finding in findings for c in (finding or {}).get("citations", [])]
+    article_references = [
+        ref for ref in _citations_to_references(all_citations) if ref["url"] not in used_urls
+    ][:6]
+    data = {**plan, "axes": public_axes, "references": article_references}
 
     # 모델이 언론사명을 못 찾으면 "확인 불가"를 돌려주는데, 그러면 Notion 페이지에
     # 출처가 아예 안 보인다. URL의 도메인이라도 있으면 그걸로 대신 채운다.
